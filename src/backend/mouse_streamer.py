@@ -181,32 +181,74 @@ class SimpleMouseInjector(Elaboratable):
                 with m.If(source.ready):
                     m.next = "IDLE"
         return m
-
+    
 class PacketArbiter(Elaboratable):
     def __init__(self):
-        self.passthrough_in=USBInStreamInterface(payload_width=8); self.inject_in=USBInStreamInterface(payload_width=8); self.merged_out=USBInStreamInterface(payload_width=8)
+        self.passthrough_in=USBInStreamInterface(payload_width=8)
+        self.inject_in=USBInStreamInterface(payload_width=8)
+        self.merged_out=USBInStreamInterface(payload_width=8)
+
     def elaborate(self, platform):
-        m = Module(); passthrough, inject, merged = self.passthrough_in, self.inject_in, self.merged_out
-        m.d.comb += [ merged.valid.eq(0), passthrough.ready.eq(0), inject.ready.eq(0) ]
+        m = Module()
+        passthrough, inject, merged = self.passthrough_in, self.inject_in, self.merged_out
+
+        # Default assignments for the output stream and input readys
+        m.d.comb += [
+            merged.valid.eq(0),
+            merged.payload.eq(0), # Default all output signals
+            merged.first.eq(0),
+            merged.last.eq(0),
+            passthrough.ready.eq(0),
+            inject.ready.eq(0)
+        ]
+
         with m.FSM(domain="usb", name="arbiter_fsm"):
             with m.State("IDLE"):
+                # Prioritize inject stream
                 with m.If(inject.valid):
                     m.next = "FORWARD_INJECT"
                 with m.Elif(passthrough.valid):
                     m.next = "FORWARD_PASSTHROUGH"
+
             with m.State("FORWARD_PASSTHROUGH"):
-                m.d.comb += merged.stream_eq(passthrough); m.d.comb += passthrough.ready.eq(merged.ready)
+                # --- MODIFIED: Explicit assignments instead of stream_eq ---
+                m.d.comb += [
+                    merged.valid.eq(passthrough.valid),
+                    merged.payload.eq(passthrough.payload),
+                    merged.first.eq(passthrough.first),
+                    merged.last.eq(passthrough.last),
+                    passthrough.ready.eq(merged.ready) # Connect ready back
+                ]
+                # --- End Modification ---
+
+                # Transition logic
                 with m.If(passthrough.valid & passthrough.last & merged.ready):
                     m.next = "IDLE"
+                # If the source disappears mid-packet (optional, depends on desired behavior)
                 with m.Elif(~passthrough.valid):
-                    m.next = "IDLE"
+                     m.next = "IDLE"
+
+
             with m.State("FORWARD_INJECT"):
-                m.d.comb += merged.stream_eq(inject); m.d.comb += inject.ready.eq(merged.ready)
+                # --- MODIFIED: Explicit assignments instead of stream_eq ---
+                m.d.comb += [
+                    merged.valid.eq(inject.valid),
+                    merged.payload.eq(inject.payload),
+                    merged.first.eq(inject.first),
+                    merged.last.eq(inject.last),
+                    inject.ready.eq(merged.ready) # Connect ready back
+                ]
+                # --- End Modification ---
+
+                # Transition logic
                 with m.If(inject.valid & inject.last & merged.ready):
                     m.next = "IDLE"
+                # If the source disappears mid-packet
                 with m.Elif(~inject.valid):
-                    m.next = "IDLE"
+                     m.next = "IDLE"
+
         return m
+
 
 # UART
 class Parity: NONE, ODD, EVEN = range(3)
