@@ -1,0 +1,62 @@
+# GitHub Actions – Deploy Jekyll site to GitHub Pages
+# -------------------------------------------------
+# Builds your Jekyll site with dependencies pre‑installed and
+# publishes the generated _site/ directory to GitHub Pages.
+
+name: "🚀 Deploy Jekyll to GitHub Pages"
+
+on:
+  # Build + deploy whenever the default branch changes
+  push:
+    branches: [main]
+
+  # Manual trigger from the Actions tab
+  workflow_dispatch:
+
+# Token permissions – least‑privilege for Pages deployments
+permissions:
+  contents: read   # required by actions/checkout
+  pages: write     # to push the static site
+  id-token: write  # to authenticate the deployment
+
+# Prevent overlapping deploys – queue excess runs
+concurrency:
+  group: "pages"
+  cancel-in-progress: false  # allow current prod deploy to finish
+
+jobs:
+  build:
+    name: "Build Jekyll site"
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        name: "Checkout repository"
+
+      # Setup the Pages runtime (creates the _GITHUB_PAGES_ env)
+      - uses: actions/configure-pages@v5
+        name: "Configure GitHub Pages"
+
+      # Compile the site into ./_site
+      - uses: actions/jekyll-build-pages@v1
+        name: "Build with Jekyll"
+        with:
+          source: "."          # Jekyll source directory
+          destination: "./_site" # static output directory
+
+      # Package _site for the deploy job
+      - uses: actions/upload-pages-artifact@v3
+        name: "Upload build artifact"
+
+  deploy:
+    name: "Deploy to GitHub Pages"
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
+        name: "Publish artifact to Pages"
