@@ -488,49 +488,50 @@ if __name__ == "__main__":
     platform_instance = _PlatformClass
     print(f"Using located platform instance: {platform_instance.name}") # Info for user
     print("\nAttempting offline elaboration check...")
-    try:
-        top_design = CynthionUartInjectionTop()
-        print("Elaborating design with platform=None...")
-        fragment = Fragment.get(top_design, platform=None)
-        print("Offline elaboration successful.")
+    if build_local := os.getenv("BUILD_LOCAL") == "1":
+        try:
+            top_design = CynthionUartInjectionTop()
+            print("Elaborating design with platform=None...")
+            fragment = Fragment.get(top_design, platform=None)
+            print("Offline elaboration successful.")
 
-        # You can generate the legit verilog if you really want
-        # print("Generating Verilog from offline fragment...")
-        # from amaranth.back import verilog
-        # from pathlib import Path
-        # build_dir = Path("./build_offline") # Use a specific directory
-        # build_dir.mkdir(parents=True, exist_ok=True)
-        # verilog_file = build_dir / "top_offline.v"
-        # with open(verilog_file, "w") as f:
-        #     # Note: Automatically determining ports for verilog.convert can be tricky.
-        #     # You might need to manually list top-level ports if needed.
-        #     f.write(verilog.convert(fragment, name="top_offline")) # Removed ports= for simplicity
-        # print(f"Offline Verilog potentially written to: {verilog_file}")
+            # You can generate the legit verilog if you really want
+            # print("Generating Verilog from offline fragment...")
+            # from amaranth.back import verilog
+            # from pathlib import Path
+            # build_dir = Path("./build_offline") # Use a specific directory
+            # build_dir.mkdir(parents=True, exist_ok=True)
+            # verilog_file = build_dir / "top_offline.v"
+            # with open(verilog_file, "w") as f:
+            #     # Note: Automatically determining ports for verilog.convert can be tricky.
+            #     # You might need to manually list top-level ports if needed.
+            #     f.write(verilog.convert(fragment, name="top_offline")) # Removed ports= for simplicity
+            # print(f"Offline Verilog potentially written to: {verilog_file}")
 
-    except Exception as e:
-        print("\nERROR during offline elaboration:")
-        import traceback
-        traceback.print_exc()
-        exit(1)
-
-    # --- Hardware Build (using luna.top_level_cli) ---
-    # TODO: Uncomment and adjust the following lines for hardware build. 
-    # python is all screwed up on my laptop so for now its just the docker bs
-    # print("\nInitiating hardware build...")
-    # try:
-    #     top_level_cli(
-    #         CynthionUartInjectionTop(),
-    #         platform=platform_instance, # Pass the ACTUAL hardware platform instance
-    #         name="top_hw",              # Different name/build dir recommended
-    #         # toolchain=platform_instance.toolchain, # Let LUNA handle toolchain detection
-    #         build_dir="build_hw",
-    #         # output="build.bit" # LUNA handles default output name
-    #         # add --upload argument to the docker run command if needed
-    #     )
-    #     print("\nHardware build process completed or Cynthion programmer launched.")
-    #     print("Check 'build_hw/' directory and programmer output.")
-    # except Exception as e:
-    #     print("\nERROR during hardware build:")
-    #     import traceback
-    #     traceback.print_exc()
-    #     exit(1)
+        except Exception as e:
+            print("\nERROR during offline elaboration:")
+            import traceback
+            traceback.print_exc()
+            exit(1)
+    else:
+        # --- Hardware Build (using luna.top_level_cli) ---
+        # TODO: Uncomment and adjust the following lines for hardware build. 
+        # python is all screwed up on my laptop so for now its just the docker bs
+        print("\nInitiating hardware build...")
+        try:
+            top_level_cli(
+                CynthionUartInjectionTop(),
+                platform=platform_instance, # Pass the ACTUAL hardware platform instance
+                name="top_hw",              # Different name/build dir recommended
+                # toolchain=platform_instance.toolchain, # Let LUNA handle toolchain detection
+                build_dir="build_hw",
+                # output="build.bit" # LUNA handles default output name
+                # add --upload argument to the docker run command if needed
+            )
+            print("\nHardware build process completed or Cynthion programmer launched.")
+            print("Check 'build_hw/' directory and programmer output.")
+        except Exception as e:
+            print("\nERROR during hardware build:")
+            import traceback
+            traceback.print_exc()
+            exit(1)
