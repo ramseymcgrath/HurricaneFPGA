@@ -1,0 +1,31 @@
+[package]
+name = "packetry_injector" # Maybe rename the package
+version = "0.1.0"
+edition = "2021"
+# Removed authors, description etc related to Packetry GUI
+
+[dependencies]
+anyhow = "1.0"
+nusb = "0.1.13" # Updated to latest available version
+bitfield = "0.13" # Or the version you were using
+serialport = "4.2" # For serial communication
+clap = { version = "4.4", features = ["derive"] } # For command-line parsing
+ctrlc = "3.4" # For graceful shutdown on Ctrl+C
+futures-lite = "1.13" # For block_on in async code
+futures-channel = "0.3" # For oneshot channel
+hut = "0.4.0" # Human Interface Device Usage Tables
+
+# Dependencies for testing only
+[dev-dependencies]
+bytemuck = { version = "1.14", features = ["derive"] }
+bytemuck_derive = "1.5"
+crc = "3.0"
+derive_more = "0.99"
+hidreport = "0.1"
+itertools = "0.12"
+num_enum = "0.7"
+usb-ids = "1.4"
+
+# Windows console attach logic removed as it's no longer needed
+
+# Build dependencies removed as we no longer use built.rs for version info
