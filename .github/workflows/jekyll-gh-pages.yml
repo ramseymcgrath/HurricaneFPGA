@@ -1,7 +1,4 @@
-# GitHub Actions – Deploy Jekyll site to GitHub Pages
-# -------------------------------------------------
-# Builds your Jekyll site with dependencies pre‑installed and
-# publishes the generated _site/ directory to GitHub Pages.
+# Jekyll GitHub Pages deployment workflow
 
 name: "🚀 Deploy Jekyll to GitHub Pages"
 
@@ -33,7 +30,6 @@ jobs:
       - uses: actions/checkout@v4
         name: "Checkout repository"
 
-      # Setup the Pages runtime (creates the _GITHUB_PAGES_ env)
       - uses: actions/configure-pages@v5
         name: "Configure GitHub Pages"
 
@@ -44,7 +40,6 @@ jobs:
           source: "."          # Jekyll source directory
           destination: "./_site" # static output directory
 
-      # Package _site for the deploy job
       - uses: actions/upload-pages-artifact@v3
         name: "Upload build artifact"
 

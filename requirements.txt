@@ -1,4 +1,0 @@
-yowasp-yosys 
-yowasp-nextpnr-ecp5
-amaranth-boards
-cynthion==0.1.8 

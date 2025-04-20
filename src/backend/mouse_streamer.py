@@ -34,7 +34,7 @@ try:
             print("\nERROR: Could not find UTMITranslator class.")
             exit(1)
 
-    # This will automatically use the LUNA_PLATFORM env var set in Dockerfile
+    # This will automatically use the LUNA_PLATFORM env var set in Dockerfile if youre using the docker image
     try:
         _PlatformClass = get_appropriate_platform()
         print(f"LUNA dynamically located platform class: {_PlatformClass}")
@@ -49,7 +49,6 @@ try:
         print(f"       Import error was: {e}")
         print(f"       Check the path specified in LUNA_PLATFORM and package installation.")
         exit(1)
-
 
 except ImportError as e: # Outer check for LUNA itself
     print(f"Import Error: {e}")
@@ -249,7 +248,6 @@ class AsyncUART(Elaboratable):
                     m.d.sync += [
                         rx_counter.eq(self.divisor // 2 - 1), # Sample mid-bit
                         rx_bit_counter.eq(0),
-                        # Clear shift register for new byte (optional, but good practice)
                         rx_shiftreg.eq(-1) # Reset to all 1s
                     ]
                     m.next = "START"
