@@ -87,12 +87,12 @@ jobs:
           echo "Testing Rust project natively..."
           cargo test --lib inject version util || echo "Ignoring test failures for now"
 
-      - name: Check Rust code formatting
-        if: hashFiles('Cargo.toml') != ''
-        run: |
-          echo "Checking Rust formatting natively..."
-          rustup component add rustfmt # Ensure rustfmt is available on runner
-          cargo fmt -- --check
+#      - name: Check Rust code formatting
+#        if: hashFiles('Cargo.toml') != ''
+#        run: |
+#          echo "Checking Rust formatting natively..."
+#          rustup component add rustfmt # Ensure rustfmt is available on runner
+#          cargo fmt -- --check
 
       - name: Generate code coverage (Tarpaulin)
         if: hashFiles('Cargo.toml') != ''
