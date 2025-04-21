@@ -71,6 +71,9 @@ jobs:
              echo "Bitstream build completed: $EXPECTED_BIT_PATH"
           fi
 
+      - name: Install system dependencies for Rust build
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev pkg-config
+
       # --- Native Rust Steps ---
       - name: Build Rust project (Release)
         if: hashFiles('Cargo.toml') != ''
