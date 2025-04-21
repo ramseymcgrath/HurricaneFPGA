@@ -1,10 +1,10 @@
 # HurricaneFPGA – HID Injection Tools
 
-[![Build Status](https://github.com/ramseymcgrath/HurricaneFPGA/actions/workflows/get_bitstream.yml/badge.svg)](https://github.com/yourusername/kmboxetry/actions/workflows/get_bitstream.yml)
+[![Build Status](https://github.com/ramseymcgrath/HurricaneFPGA/actions/workflows/get_bitstream.yml/badge.svg)](https://github.com/ramseymcgrath/HurricaneFPGA/actions/workflows/build_and_test.yml)
 [![Code Coverage](https://codecov.io/gh/ramseymcgrath/HurricaneFPGA/branch/main/graph/badge.svg)](https://codecov.io/gh/yourusername/kmboxetry)
 
 > ✨ **Current status – UART‑controlled HID injection**  
-> The latest bitstream (`cynthion_passthrough.py`) still provides a **USB Full‑Speed passthrough**, **plus** a tiny UART‑driven injector.  
+> The latest bitstream (`src/backend/mouse_streamer.py`) still provides a **USB Full‑Speed passthrough**, **plus** a tiny UART‑driven injector.  
 > The Rust CLI (`packetry_injector`) now acts as a **gateway** – it listens for network commands and forwards raw 3‑byte packets over a serial link (PMOD A) to the FPGA.
 
 HurricaneFPGA explores low‑level USB manipulation on the **[Cynthion FPGA](https://greatscottgadgets.com/cynthion/)**. It ships:
