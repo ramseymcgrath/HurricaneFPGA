@@ -6,6 +6,6 @@
 version: 2
 updates:
   - package-ecosystem: "pip" # See documentation for possible values
-    directory: "/src/hardware # Location of package manifests
+    directory: "/src/backend # Location of package manifests
     schedule:
       interval: "weekly"
