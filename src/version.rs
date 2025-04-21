@@ -10,7 +10,7 @@ pub fn version() -> &'static str {
 /// Returns detailed version information
 pub fn version_info(with_dependencies: bool) -> String {
     let output = format!("\
-Packetry Injector build information:
+Hurricane build information:
   Version: {}",
         env!("CARGO_PKG_VERSION")
     );
