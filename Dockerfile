@@ -3,7 +3,7 @@ FROM python:latest
 
 # Basic build tools and fonts (for graphviz if needed)
 RUN apt-get update
-RUN apt-get install build-essential graphviz pkg-config libgraphviz-dev libusb-1.0-0
+RUN apt-get install -y build-essential graphviz pkg-config libgraphviz-dev libusb-1.0-0
 RUN rm -rf /var/lib/apt/lists/*
 
 # Install yowasp-yosys FIRST (gets the right wheel for this OS/arch)
