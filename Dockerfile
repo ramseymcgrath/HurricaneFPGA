@@ -15,9 +15,9 @@ RUN pip install amaranth amaranth-boards pyserial setuptools wheel pyvcd pytest 
 RUN pip install git+https://github.com/greatscottgadgets/luna.git
 
 # Copy your project files into the container (change path if needed)
-COPY . /work
-WORKDIR /work
 ENV LUNA_PLATFORM="cynthion.gateware.platform:CynthionPlatformRev1D4"
 ENV BUILD_LOCAL="1"
+COPY src/backend/ /work
+WORKDIR /work
 # Default command (change if needed)
 CMD ["python", "src/backend/mouse_streamer.py"]
