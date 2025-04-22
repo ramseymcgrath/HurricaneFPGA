@@ -8,21 +8,23 @@ import os
 from amaranth import *
 from amaranth.build import Platform, Attrs, Pins, PinsN, Resource, Subsignal
 from amaranth.lib.data import Struct
-from luna import configure_default_logging, top_level_cli
-from luna.gateware.platform import NullPin, get_appropriate_platform
-from luna.gateware.usb.usb2.device import USBDevice
-from luna_soc.gateware.cpu.vexriscv import VexRiscv
-from luna_soc.gateware.lunasoc import LunaSoC
-from luna_soc.gateware.vendor.lambdasoc.periph import Peripheral
-from luna_soc.gateware.vendor.lambdasoc.periph.serial import AsyncSerialPeripheral
-from luna_soc.gateware.vendor.amaranth_stdio.serial import AsyncSerial
-from luna_soc.gateware.csr import GpioPeripheral, LedPeripheral, USBDeviceController
-from luna_soc.gateware.csr import SetupFIFOInterface, InFIFOInterface, OutFIFOInterface
-from luna_soc.gateware.wishbone import ECP5ConfigurationFlashInterface, SPIPHYController, SPIFlashPeripheral
+from amaranth.lib.io import Pin
+from amaranth.lib.cdc import FFSynchronizer
+from amaranth.lib.fifo import SyncFIFOBuffered, AsyncFIFOBuffered
+from amaranth.lib.data import Layout
+from amaranth.lib.wiring import In, Out
 
-# Replace relative imports with absolute based on your project structure
-from advertiser import ApolloAdvertiserPeripheral
-from info import CynthionInformationPeripheral
+# Import the necessary modules from LUNA
+from luna import top_level_cli
+from luna.gateware.platform import get_appropriate_platform, NullPin
+from luna.gateware.usb.usb2.device import USBDevice
+from luna.gateware.interface.ulpi import UTMITranslator
+
+# Import the required standard modules from Amaranth StdIO and SoC
+from luna_soc.gateware.vendor.amaranth_stdio.serial import AsyncSerial
+from luna_soc.gateware.vendor.lambdasoc.periph         import Peripheral
+from luna_soc.gateware.vendor.amaranth_soc.memory import MemoryMap
+
 
 class USBPacketID:
     OUT = 0b0001
@@ -35,37 +37,39 @@ class USBPacketID:
     MDATA = 0b1111
 
 # Custom Stream Interface
-class StreamInterface(Struct):
+class StreamInterface:
     def __init__(self, payload_width=8):
-        super().__init__([("valid", 1), ("ready", 1), ("payload", payload_width)])
+        self.payload_width = payload_width
+        self.valid = Signal()
+        self.ready = Signal()
+        self.payload = Signal(payload_width)
+        self.first = Signal()
+        self.last = Signal()
 
     def stream_eq(self, other, *, omit=None):
+        """Connects FORWARD signals (valid, payload, first, last)"""
         if omit is None:
             omit = set()
         elif isinstance(omit, str):
             omit = {omit}
         connect_list = []
-        if 'valid' not in omit and hasattr(self, 'valid') and hasattr(other, 'valid'):
+        if 'valid' not in omit:
             connect_list.append(other.valid.eq(self.valid))
-        if 'payload' not in omit and hasattr(self, 'payload') and hasattr(other, 'payload'):
+        if 'payload' not in omit:
             connect_list.append(other.payload.eq(self.payload))
-        if 'first' not in omit and hasattr(self, 'first') and hasattr(other, 'first'):
+        if 'first' not in omit:
             connect_list.append(other.first.eq(self.first))
-        if 'last' not in omit and hasattr(self, 'last') and hasattr(other, 'last'):
+        if 'last' not in omit:
             connect_list.append(other.last.eq(self.last))
         return connect_list
 
 class USBInStreamInterface(StreamInterface):
     def __init__(self, payload_width=8):
         super().__init__(payload_width)
-        self.first = Signal()
-        self.last = Signal()
 
 class USBOutStreamInterface(StreamInterface):
     def __init__(self, payload_width=8):
         super().__init__(payload_width)
-        self.first = Signal()
-        self.last = Signal()
 
 # LED Controller
 class LEDController(Elaboratable):
@@ -82,11 +86,10 @@ class LEDController(Elaboratable):
             try:
                 led_pin = platform.request("led", i)
                 m.d.comb += led_pin.o.eq(self.led_outputs[i])
-            except (amaranth.build.ResourceError, AttributeError, IndexError):
+            except (ResourceError, AttributeError, IndexError):
                 print(f"Note: LED {i} not available")
 
         return m
-
 
 # Simplified Boundary Detector
 class USBOutStreamBoundaryDetector(Elaboratable):
@@ -101,7 +104,9 @@ class USBOutStreamBoundaryDetector(Elaboratable):
         m = Module()
         unprocessed = self.unprocessed_stream
         processed = self.processed_stream
-        payload = Signal.like(processed.payload)
+
+        active_packet = Signal(reset=0)
+        payload = Signal.like(unprocessed.payload)
         first = Signal()
         last = Signal()
         valid = Signal()
@@ -111,20 +116,18 @@ class USBOutStreamBoundaryDetector(Elaboratable):
             processed.first.eq(first),
             processed.last.eq(last),
             processed.valid.eq(valid),
-            unprocessed.ready.eq(processed.ready)
+            unprocessed.ready.eq(processed.ready),
         ]
 
-        active_packet = Signal(reset=0)
         m.d.comb += [
             valid.eq(unprocessed.valid),
             payload.eq(unprocessed.payload),
             first.eq(0),
-            last.eq(0)
+            last.eq(0),
         ]
 
         with m.If(unprocessed.valid & ~active_packet):
             m.d.comb += first.eq(1)
-        # Simplified last detection - payload == 0 heuristic
         with m.If(unprocessed.valid & active_packet & (unprocessed.payload == 0)):
             m.d.comb += last.eq(1)
         with m.If(unprocessed.valid & processed.ready):
@@ -137,17 +140,18 @@ class USBOutStreamBoundaryDetector(Elaboratable):
         return m
 
 # Custom CDC Synchronizer
-def synchronize(m, signal, o_domain, stages=2, name=None):
+def synchronize(signal, o_domain, stages=2, name=None):
     """Synchronizes a signal from one clock domain to another."""
     sync_stages = []
     last_stage = signal
     for i in range(stages):
         sig_name = f"{name}_stage{i}" if name else None
         stage = Signal.like(signal, name=sig_name, reset_less=True)
-        m.d[o_domain] += stage.eq(last_stage)
         sync_stages.append(stage)
         last_stage = stage
-    return sync_stages[-1]
+    m = Module()
+    m.d[o_domain] += stage.eq(last_stage)
+    return stage
 
 # Simple Mouse Packet Injector
 class SimpleMouseInjector(Elaboratable):
@@ -226,7 +230,6 @@ class SimpleMouseInjector(Elaboratable):
 
         return m
 
-
 # Packet Arbiter
 class PacketArbiter(Elaboratable):
     """Arbitrates between passthrough and inject streams."""
@@ -289,7 +292,6 @@ class PacketArbiter(Elaboratable):
 
         return m
 
-
 # USB Passthrough Analyzer
 class USBPassthroughAnalyzer(Elaboratable):
     """Analyzes USB passthrough data and drives status LEDs."""
@@ -312,26 +314,24 @@ class USBPassthroughAnalyzer(Elaboratable):
             print("USBPassthroughAnalyzer: Running in offline mode.")
             # Define dummy layout for offline synthesis/simulation
             ulpi_bus_layout = [
-                # Bidirectional data signal
                 ("data", [
-                    ("i", 8, Direction.FANIN),
-                    ("o", 8, Direction.FANOUT),
-                    ("oe", 1, Direction.FANOUT)
+                    ("i", 8, In),
+                    ("o", 8, Out),
+                    ("oe", 1, Out)
                 ]),
-                # Unidirectional signals defined with explicit direction subsignal
-                ("clk", [("o", 1, Direction.FANOUT)]),  # Clock out from FPGA
-                ("dir", [("i", 1, Direction.FANIN)]),   # Direction in to FPGA
-                ("nxt", [("i", 1, Direction.FANIN)]),   # Next in to FPGA
-                ("stp", [("o", 1, Direction.FANOUT)]),  # Stop out from FPGA
-                ("rst", [("o", 1, Direction.FANOUT)])   # Reset out from FPGA
+                ("clk", [("o", 1, Out)]),  # Clock out from FPGA
+                ("dir", [("i", 1, In)]),   # Direction in to FPGA
+                ("nxt", [("i", 1, In)]),   # Next in to FPGA
+                ("stp", [("o", 1, Out)]),  # Stop out from FPGA
+                ("rst", [("o", 1, Out)])   # Reset out from FPGA
             ]
             target_ulpi_res = Record(ulpi_bus_layout, name="offline_target_ulpi")
             control_ulpi_res = Record(ulpi_bus_layout, name="offline_control_ulpi")
         else:
             target_ulpi_res = platform.request('target_phy', 0)  # J2 -> Host PC side
             control_ulpi_res = platform.request('control_phy', 0)  # J3 -> Device side
-        m.submodules.host_translator = host_translator = DomainRenamer("sync")(UTMITranslator(ulpi=target_ulpi_res, handle_clocking=False))
-        m.submodules.dev_translator = dev_translator = DomainRenamer("sync")(UTMITranslator(ulpi=control_ulpi_res, handle_clocking=False))
+        m.submodules.host_translator = host_translator = DomainRenamer("sync")(UTMITranslator(ulpi=target_ulpi_res))
+        m.submodules.dev_translator = dev_translator = DomainRenamer("sync")(UTMITranslator(ulpi=control_ulpi_res))
         if platform is not None:  # Only connect in hardware mode
             m.d.comb += [
                 target_ulpi_res.clk.o.eq(ClockSignal("sync")),
@@ -342,15 +342,17 @@ class USBPassthroughAnalyzer(Elaboratable):
             host_translator.xcvr_select.eq(0b01),
             host_translator.term_select.eq(1),
             host_translator.suspend.eq(0),
-            host_translator.dp_pulldown.eq(0),
-            host_translator.dm_pulldown.eq(0),
             dev_translator.op_mode.eq(0b00),
             dev_translator.xcvr_select.eq(0b01),
             dev_translator.term_select.eq(1),
             dev_translator.suspend.eq(0),
-            dev_translator.dp_pulldown.eq(0),
-            dev_translator.dm_pulldown.eq(0),
         ]
+
+        # Remove deprecated pulldown controls if they are not supported
+        # host_translator.dp_pulldown.eq(0),
+        # host_translator.dm_pulldown.eq(0),
+        # dev_translator.dp_pulldown.eq(0),
+        # dev_translator.dm_pulldown.eq(0),
 
         # Configure FIFOs
         fifo_depth, fifo_width = 16, 10
@@ -470,20 +472,15 @@ class USBPassthroughAnalyzer(Elaboratable):
         dev_activity_duration = int(60e6 * 0.05)
         dev_counter = Signal(range(dev_activity_duration))
 
-        m.d.sync += [
-            # Host packet detection
-            If(host_rx_fifo.w_en,
-               host_counter.eq(host_activity_duration - 1)
-               ).Elif(host_counter > 0,
-                      host_counter.eq(host_counter - 1)
-                      ),
-            # Device packet detection
-            If(dev_rx_fifo.w_en,
-               dev_counter.eq(dev_activity_duration - 1)
-               ).Elif(dev_counter > 0,
-                      dev_counter.eq(dev_counter - 1)
-                      )
-        ]
+        with m.If(host_rx_fifo.w_en):
+            m.d.sync += host_counter.eq(host_activity_duration - 1)
+        with m.Elif(host_counter > 0):
+            m.d.sync += host_counter.eq(host_counter - 1)
+
+        with m.If(dev_rx_fifo.w_en):
+            m.d.sync += dev_counter.eq(dev_activity_duration - 1)
+        with m.Elif(dev_counter > 0):
+            m.d.sync += dev_counter.eq(dev_counter - 1)
 
         m.d.comb += [
             self.host_packet.eq(host_counter > 0),
@@ -492,92 +489,60 @@ class USBPassthroughAnalyzer(Elaboratable):
 
         return m
 
-
 # Top-Level Module
 class CynthionUartInjectionTop(Elaboratable):
     BAUD_RATE = 115200
     SYNC_CLK_FREQ = 60_000_000
-    USB_CLK_FREQ = 48_000_000
+    USB_CLK_FREQ = 60_000_000  # Adjusted to match sync_clk for simplicity
 
     def elaborate(self, platform: Platform):
         m = Module()
+
+        # Clock and Reset Setup
         if platform is None:
             print("Running in offline mode...")
             m.domains.sync = ClockDomain(local=True)
             m.domains.usb = ClockDomain(local=True)
             m.submodules.analyzer = USBPassthroughAnalyzer()
         else:
-            # Clock and Reset Setup
-            clk100_resource = platform.request(platform.default_clk)
-            clk100_input_signal = Signal(name="clk100_input")
-            try:
-                m.d.comb += clk100_input_signal.eq(clk100_resource)
-            except TypeError:
-                pin_signal = None
-                if hasattr(clk100_resource, 'i'):
-                    pin_signal = clk100_resource.i
-                elif hasattr(clk100_resource, 'p'):
-                    pin_signal = clk100_resource.p
-                if pin_signal is not None:
-                    m.d.comb += clk100_input_signal.eq(pin_signal)
-                else:
-                    raise TypeError(f"Clock resource {platform.default_clk} not connectable.")
-
+            # Obtain the default platform clock
+            clk = platform.request(platform.default_clk)
             m.domains.sync = ClockDomain()
+            m.d.comb += ClockSignal("sync").eq(clk.i)
+
+            # For simplicity, use the same clock for USB domain
             m.domains.usb = ClockDomain()
+            m.d.comb += ClockSignal("usb").eq(clk.i)
 
-            # PLL Instantiation
-            pll_locked = Signal()
-            clk_sync_unbuf = Signal(name="clk_sync_unbuf")
-            clk_usb_unbuf = Signal(name="clk_usb_unbuf")
-            clk_feedback = Signal(name="pll_clk_feedback")
-            m.submodules.pll = Instance("EHXPLLL",
-                                        i_CLKI=clk100_input_signal,
-                                        i_CLKFB=clk_feedback,
-                                        o_CLKOP=clk_feedback,
-                                        o_CLKOS=clk_usb_unbuf,
-                                        o_CLKOS2=clk_sync_unbuf,
-                                        o_LOCK=pll_locked,
-                                        p_CLKI_DIV=5,
-                                        p_CLKOP_DIV=1,
-                                        p_CLKFB_DIV=24,
-                                        p_CLKOS_DIV=10,
-                                        p_CLKOS2_DIV=8,
-                                        p_FEEDBK_PATH="CLKOP",
-                                        p_CLKOP_ENABLE="ENABLED",
-                                        p_CLKOS_ENABLE="ENABLED",
-                                        p_CLKOS2_ENABLE="ENABLED",
-                                        )
+            # Reset Logic
             m.d.comb += [
-                ClockSignal("sync").eq(clk_sync_unbuf),
-                ClockSignal("usb").eq(clk_usb_unbuf)
-            ]
-
-            # Reset Generation
-            reset_sig = Signal(name="pll_reset")
-            m.d.comb += reset_sig.eq(~pll_locked)
-            m.d.comb += [
-                ResetSignal("sync").eq(reset_sig),
-                ResetSignal("usb").eq(reset_sig)
+                ResetSignal("sync").eq(0),
+                ResetSignal("usb").eq(0)
             ]
 
             # UART Handler using AsyncSerial
             uart_pins = platform.request("uart", 0)
             print(f"Using UART resource: uart_0")
             uart_divisor = int(self.SYNC_CLK_FREQ // self.BAUD_RATE)
-            m.submodules.uart = uart = AsyncSerialPeripheral(divisor=uart_divisor,pins=uart_pins)
+
+            m.submodules.uart = uart = AsyncSerial(
+                divisor = uart_divisor,
+                pins    = uart_pins,
+                data_bits = 8
+            )
+
             # FIFO Buffers for UART
-            rx_fifo = SyncFIFO(width=8, depth=16)
-            tx_fifo = SyncFIFO(width=8, depth=16)
-            m.submodules += rx_fifo
-            m.submodules += tx_fifo
+            rx_fifo = SyncFIFOBuffered(width=8, depth=16)
+            tx_fifo = SyncFIFOBuffered(width=8, depth=16)
+            m.submodules.rx_fifo = rx_fifo
+            m.submodules.tx_fifo = tx_fifo
 
             # Connect UART RX and TX to FIFOs
             m.d.comb += [
                 # UART RX to RX FIFO
-                uart.rx.ack.eq(rx_fifo.w_rdy),
                 rx_fifo.w_en.eq(uart.rx.rdy),
                 rx_fifo.w_data.eq(uart.rx.data),
+                uart.rx.ack.eq(rx_fifo.w_rdy),
 
                 # TX FIFO to UART TX
                 uart.tx.data.eq(tx_fifo.r_data),
@@ -597,18 +562,18 @@ class CynthionUartInjectionTop(Elaboratable):
                 with m.State("IDLE"):
                     with m.If(rx_fifo.r_rdy):
                         m.d.sync += temp_buttons.eq(rx_fifo.r_data)
-                        m.d.comb += rx_fifo.r_en.eq(1)
+                        m.d.sync += rx_fifo.r_en.eq(1)
                         m.next = "WAIT_DX"
                     with m.Else():
-                        m.d.comb += rx_fifo.r_en.eq(0)
+                        m.d.sync += rx_fifo.r_en.eq(0)
 
                 with m.State("WAIT_DX"):
                     with m.If(rx_fifo.r_rdy):
                         m.d.sync += temp_dx.eq(rx_fifo.r_data)
-                        m.d.comb += rx_fifo.r_en.eq(1)
+                        m.d.sync += rx_fifo.r_en.eq(1)
                         m.next = "WAIT_DY"
                     with m.Else():
-                        m.d.comb += rx_fifo.r_en.eq(0)
+                        m.d.sync += rx_fifo.r_en.eq(0)
 
                 with m.State("WAIT_DY"):
                     with m.If(rx_fifo.r_rdy):
@@ -617,31 +582,33 @@ class CynthionUartInjectionTop(Elaboratable):
                             dx.eq(temp_dx),
                             dy.eq(rx_fifo.r_data)
                         ]
-                        m.d.comb += [
-                            rx_fifo.r_en.eq(1),
-                            cmd_ready.eq(1)
-                        ]
+                        m.d.sync += rx_fifo.r_en.eq(1)
+                        m.d.comb += cmd_ready.eq(1)
                         m.next = "IDLE"
                     with m.Else():
-                        m.d.comb += rx_fifo.r_en.eq(0)
+                        m.d.sync += rx_fifo.r_en.eq(0)
 
             # Synchronize UART signals to USB domain
-            sync_buttons = synchronize(m, buttons, o_domain="usb", stages=3, name="sync_buttons")
-            sync_dx = synchronize(m, dx, o_domain="usb", stages=3, name="sync_dx")
-            sync_dy = synchronize(m, dy, o_domain="usb", stages=3, name="sync_dy")
-            cmd_ready_sync_cdc = synchronize(m, cmd_ready, o_domain="usb", stages=3, name="cmd_ready_sync")
+            m.submodules += FFSynchronizer(buttons, buttons_usb := Signal(8), o_domain="usb")
+            m.submodules += FFSynchronizer(dx, dx_usb := Signal(8), o_domain="usb")
+            m.submodules += FFSynchronizer(dy, dy_usb := Signal(8), o_domain="usb")
+            m.submodules += FFSynchronizer(cmd_ready, cmd_ready_usb := Signal(), o_domain="usb")
+
             prev_cmd_ready = Signal(reset_less=True, domain="usb")
             inject_trigger = Signal()
 
-            m.d.usb += prev_cmd_ready.eq(cmd_ready_sync_cdc)
-            m.d.comb += inject_trigger.eq(cmd_ready_sync_cdc & ~prev_cmd_ready)
+            with m.If(cmd_ready_usb & ~prev_cmd_ready):
+                m.d.usb += inject_trigger.eq(1)
+            with m.Else():
+                m.d.usb += inject_trigger.eq(0)
+            m.d.usb += prev_cmd_ready.eq(cmd_ready_usb)
 
             # Instantiate Analyzer Module
             m.submodules.analyzer = analyzer = USBPassthroughAnalyzer()
             m.d.comb += [
-                analyzer.i_buttons.eq(sync_buttons),
-                analyzer.i_dx.eq(sync_dx),
-                analyzer.i_dy.eq(sync_dy),
+                analyzer.i_buttons.eq(buttons_usb),
+                analyzer.i_dx.eq(dx_usb),
+                analyzer.i_dy.eq(dy_usb),
                 analyzer.i_inject_trigger.eq(inject_trigger)
             ]
 
@@ -663,6 +630,7 @@ class CynthionUartInjectionTop(Elaboratable):
 
         return m
 
+# Entry Point
 if __name__ == "__main__":
     _PlatformClass = get_appropriate_platform()
     platform_instance = _PlatformClass
@@ -674,12 +642,25 @@ if __name__ == "__main__":
             print("Elaborating design with platform=None...")
             fragment = Fragment.get(top_design, platform=None)
             print("Offline elaboration successful.")
+
+            # Optionally generate Verilog output
+            # print("Generating Verilog from offline fragment...")
+            # from amaranth.back import verilog
+            # from pathlib import Path
+            # build_dir = Path("./build_offline")
+            # build_dir.mkdir(parents=True, exist_ok=True)
+            # verilog_file = build_dir / "top_offline.v"
+            # with open(verilog_file, "w") as f:
+            #     f.write(verilog.convert(fragment, name="top_offline"))
+            # print(f"Offline Verilog written to: {verilog_file}")
+
         except Exception as e:
             print("\nERROR during offline elaboration:")
             import traceback
             traceback.print_exc()
             exit(1)
     else:
+        # Hardware Build (using luna.top_level_cli)
         print("\nInitiating hardware build...")
         try:
             top_level_cli(
@@ -695,4 +676,3 @@ if __name__ == "__main__":
             import traceback
             traceback.print_exc()
             exit(1)
-            
