@@ -325,6 +325,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "hurricanefpga"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bitfield",
+ "bytemuck",
+ "bytemuck_derive",
+ "clap",
+ "crc",
+ "ctrlc",
+ "derive_more",
+ "futures-channel",
+ "futures-lite",
+ "hidreport",
+ "hut",
+ "itertools",
+ "num_enum",
+ "nusb",
+ "serialport",
+ "usb-ids",
+]
+
+[[package]]
 name = "hut"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -511,29 +534,6 @@ name = "once_cell"
 version = "1.21.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "42f5e15c9953c5e4ccceeb2e7382a716482c34515315f7b03532b8b4e8393d2d"
-
-[[package]]
-name = "packetry_injector"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "bitfield",
- "bytemuck",
- "bytemuck_derive",
- "clap",
- "crc",
- "ctrlc",
- "derive_more",
- "futures-channel",
- "futures-lite",
- "hidreport",
- "hut",
- "itertools",
- "num_enum",
- "nusb",
- "serialport",
- "usb-ids",
-]
 
 [[package]]
 name = "parking"
