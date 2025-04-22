@@ -13,6 +13,7 @@ from amaranth.lib.cdc import FFSynchronizer
 from amaranth.lib.fifo import SyncFIFOBuffered, AsyncFIFOBuffered
 from amaranth.lib.data import Layout
 from amaranth.lib.wiring import In, Out
+from amaranth import Signal
 
 # Import the necessary modules from LUNA
 from luna import top_level_cli
@@ -22,9 +23,8 @@ from luna.gateware.interface.ulpi import UTMITranslator
 
 # Import the required standard modules from Amaranth StdIO and SoC
 from luna_soc.gateware.vendor.amaranth_stdio.serial import AsyncSerial
-from luna_soc.gateware.vendor.lambdasoc.periph         import Peripheral
+from luna_soc.gateware.vendor.lambdasoc.periph import Peripheral
 from luna_soc.gateware.vendor.amaranth_soc.memory import MemoryMap
-
 
 class USBPacketID:
     OUT = 0b0001
@@ -593,8 +593,10 @@ class CynthionUartInjectionTop(Elaboratable):
             m.submodules += FFSynchronizer(dx, dx_usb := Signal(8), o_domain="usb")
             m.submodules += FFSynchronizer(dy, dy_usb := Signal(8), o_domain="usb")
             m.submodules += FFSynchronizer(cmd_ready, cmd_ready_usb := Signal(), o_domain="usb")
-
-            prev_cmd_ready = Signal(reset_less=True, domain="usb")
+            
+            # Create a reset-less signal in the USB domain
+            prev_cmd_ready = Signal(reset_less=True)
+            # Create a trigger signal for the analyzer
             inject_trigger = Signal()
 
             with m.If(cmd_ready_usb & ~prev_cmd_ready):
