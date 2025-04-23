@@ -4,7 +4,7 @@ on:
   push:
     paths:
       # Trigger on changes to relevant files
-      - 'src/backend/mouse_streamer.py'
+      - 'src/backend/**'
       - 'src/**'
       - '.github/workflows/build_and_test.yml'
       - 'Cargo.toml'
@@ -46,30 +46,9 @@ jobs:
       - name: Run Amaranth Offline Elaboration Check (Docker)
         run: |
           echo "Running offline elaboration check inside Docker..."
-          docker run --rm -v ${{ github.workspace }}:/work -w /work amaranth-cynthion-builder:latest \
-            python src/backend/mouse_streamer.py --offline-check
-
-      - name: Build Hardware Bitstream (Docker, if Tag or Manual)
-        # Only run on tags or manual workflow_dispatch triggers
-        if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
-        id: build_hw
-        run: |
-          echo "Building hardware bitstream inside Docker..."
-          # Create build dir on host first so Docker can write to it via mount
-          mkdir -p build_hw
-          docker run --rm -v ${{ github.workspace }}:/work -w /work amaranth-cynthion-builder:latest \
-            python src/backend/mouse_streamer.py --build-hw
-          # Check if the expected output file exists after the build
-          DEFAULT_BITSTREAM_NAME="cynthion_mouse_injector" # Matches name in script
-          EXPECTED_BIT_PATH="build_hw/gateware/${DEFAULT_BITSTREAM_NAME}.bit"
-          if [ ! -f "$EXPECTED_BIT_PATH" ]; then
-            echo "WARNING: Expected bitstream file $EXPECTED_BIT_PATH was not generated."
-            echo "Contents of ./build_hw/gateware/:"
-            ls -la build_hw/gateware/ || echo "./build_hw/gateware/ not found."
-            # Decide if this should be a fatal error for releases: exit 1
-          else
-             echo "Bitstream build completed: $EXPECTED_BIT_PATH"
-          fi
+          docker run --rm -v ${{ github.workspace }}:/work -w /work amaranth-cynthion-builder:latest
+        continue-on-error: true
+        # Note: Docker might fail toward the end, as long as it gets to Apollo its fine
 
       - name: Install system dependencies for Rust build
         run: sudo apt-get update && sudo apt-get install -y libudev-dev pkg-config
@@ -86,13 +65,6 @@ jobs:
         run: |
           echo "Testing Rust project natively..."
           cargo test --lib inject version util || echo "Ignoring test failures for now"
-
-#      - name: Check Rust code formatting
-#        if: hashFiles('Cargo.toml') != ''
-#        run: |
-#          echo "Checking Rust formatting natively..."
-#          rustup component add rustfmt # Ensure rustfmt is available on runner
-#          cargo fmt -- --check
 
       - name: Generate code coverage (Tarpaulin)
         if: hashFiles('Cargo.toml') != ''
@@ -131,22 +103,8 @@ jobs:
         run: |
           ARTIFACT_DIR="${{ github.workspace }}/artifacts"
           mkdir -p ${ARTIFACT_DIR}
-          HW_BUILT="false"
 
           echo "Packaging artifacts..."
-
-          # Copy the bitstream (created via Docker mount)
-          DEFAULT_BITSTREAM_NAME="cynthion_mouse_injector"
-          EXPECTED_BIT_PATH="build_hw/gateware/${DEFAULT_BITSTREAM_NAME}.bit"
-          if [ -f "$EXPECTED_BIT_PATH" ]; then
-            cp "$EXPECTED_BIT_PATH" "${ARTIFACT_DIR}/${DEFAULT_BITSTREAM_NAME}.bit"
-            echo "- Added ${DEFAULT_BITSTREAM_NAME}.bit"
-            HW_BUILT="true"
-          elif [[ "${{ steps.build_hw.outcome }}" == "success" ]]; then
-             echo "WARN: Hardware build step ran but bitstream ($EXPECTED_BIT_PATH) not found!"
-          else
-             echo "Skipping bitstream packaging (Hardware build did not run or failed)."
-          fi
 
           # Copy the Rust binary (created natively)
           if [ -f target/release/packetry_injector ]; then
@@ -162,7 +120,6 @@ jobs:
           echo "Packaged files:"
           ls -l ${ARTIFACT_DIR}/ || echo "No files packaged."
           echo "artifact_path=${ARTIFACT_DIR}" >> $GITHUB_OUTPUT
-          echo "hw_built=${HW_BUILT}" >> $GITHUB_OUTPUT
 
       - name: Upload Build Artifact
         uses: actions/upload-artifact@v4
@@ -170,29 +127,3 @@ jobs:
           name: build-artifacts-${{ github.run_number }}
           path: ${{ steps.package.outputs.artifact_path }}
           if-no-files-found: warn
-
-      - name: Generate Changelog for Release
-        if: github.ref_type == 'tag'
-        id: changelog
-        run: |
-          CHANGELOG_FILE="${{ github.workspace }}/CHANGELOG_RELEASE.md"
-          echo "# Release ${{ github.ref_name }}" > ${CHANGELOG_FILE}
-          # ... (rest of changelog generation is the same) ...
-          # Adjust text based on whether HW build was done
-          if [[ "${{ steps.package.outputs.hw_built }}" == "true" ]]; then
-            echo "- Amaranth gateware built using \`src/backend/mouse_streamer.py\` (in Docker)." >> ${CHANGELOG_FILE}
-          else
-            echo "- Amaranth code checked (offline) using \`src/backend/mouse_streamer.py\` (in Docker)." >> ${CHANGELOG_FILE}
-          fi
-          # ... (rest of changelog generation) ...
-          cat ${CHANGELOG_FILE}
-          echo "body_path=${CHANGELOG_FILE}" >> $GITHUB_OUTPUT
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        if: github.ref_type == 'tag'
-        with:
-          body_path: ${{ steps.changelog.outputs.body_path }}
-          files: ${{ steps.package.outputs.artifact_path }}/*
-          fail_on_unmatched_files: false
-

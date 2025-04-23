@@ -16,6 +16,11 @@ use crate::version::{version, version_info};
 const SERIAL_WRITE_TIMEOUT_MS: u64 = 50;
 const MOUSE_SPEED: i8 = 5; // Default mouse movement speed
 
+// Special command constants
+const HANDSHAKE_BYTE1: u8 = 0xA5;
+const HANDSHAKE_BYTE2: u8 = 0x5A;
+const HANDSHAKE_BYTE3: u8 = 0xFF;
+
 // Mouse command structure for better testability
 #[derive(Debug, PartialEq, Eq)]
 pub struct MouseCommand {
@@ -130,6 +135,36 @@ pub fn send_mouse_command(port: &mut Box<dyn SerialPort>, command: &MouseCommand
     port.flush().context("Failed to flush serial port")?;
     
     Ok(())
+}
+
+/// Sends a handshake request to the FPGA and waits for acknowledgment
+/// Returns true if handshake was successful
+pub fn perform_handshake(port: &mut Box<dyn SerialPort>) -> Result<bool> {
+    println!("Sending handshake request to FPGA...");
+    
+    // Send the special handshake sequence
+    let handshake_data = [HANDSHAKE_BYTE1, HANDSHAKE_BYTE2, HANDSHAKE_BYTE3];
+    port.write_all(&handshake_data)
+        .context("Failed to write handshake to serial port")?;
+    port.flush().context("Failed to flush serial port")?;
+    
+    // Wait for acknowledgment (ACK byte, 0x06)
+    let mut response = [0u8; 1];
+    match port.read_exact(&mut response) {
+        Ok(_) => {
+            if response[0] == 0x06 { // ACK
+                println!("✅ Handshake successful! LED 4 should be lit on the FPGA.");
+                Ok(true)
+            } else {
+                println!("❌ Unexpected response from FPGA: 0x{:02X}", response[0]);
+                Ok(false)
+            }
+        },
+        Err(e) => {
+            println!("❌ No response from FPGA: {}", e);
+            Ok(false)
+        }
+    }
 }
 
 /// Runs the interactive console with WASD controls
@@ -280,6 +315,11 @@ fn main() -> Result<()> {
         .with_context(|| format!("Failed to open serial port '{}'", port_name))?;
     
     println!("Serial port opened successfully.");
+
+    // Perform handshake with FPGA
+    if !perform_handshake(&mut port)? {
+        anyhow::bail!("Handshake failed. Please check the FPGA connection and try again.");
+    }
 
     // Setup Ctrl+C handler
     let running = Arc::new(AtomicBool::new(true));

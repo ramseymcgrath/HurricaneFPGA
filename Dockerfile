@@ -17,7 +17,7 @@ RUN pip install git+https://github.com/greatscottgadgets/luna.git
 # Copy your project files into the container (change path if needed)
 ENV LUNA_PLATFORM="cynthion.gateware.platform:CynthionPlatformRev1D4"
 ENV BUILD_LOCAL="1"
-COPY src/backend/ /work
+COPY . /work
 WORKDIR /work
 # Default command (change if needed)
-CMD ["python", "mouse_streamer.py"]
+CMD ["python", "src/backend/top.py"]

@@ -1,13 +1,13 @@
 # HurricaneFPGA – HID Injection Tools
 
 [![Build Status](https://github.com/ramseymcgrath/HurricaneFPGA/actions/workflows/get_bitstream.yml/badge.svg)](https://github.com/ramseymcgrath/HurricaneFPGA/actions/workflows/build_and_test.yml)
-[![Code Coverage](https://codecov.io/gh/ramseymcgrath/HurricaneFPGA/branch/main/graph/badge.svg)](https://codecov.io/gh/yourusername/kmboxetry)
+[![Code Coverage](https://codecov.io/gh/ramseymcgrath/HurricaneFPGA/branch/main/graph/badge.svg)](https://codecov.io/gh/yourusername/kmboxetry)
 
-> ✨ **Current status – UART‑controlled HID injection**  
-> The latest bitstream (`src/backend/mouse_streamer.py`) still provides a **USB Full‑Speed passthrough**, **plus** a tiny UART‑driven injector.  
-> The Rust CLI (`packetry_injector`) now acts as a **gateway** – it listens for network commands and forwards raw 3‑byte packets over a serial link (PMOD A) to the FPGA.
+> ✨ **Current status – UART‑controlled HID injection with handshake**  
+> The latest bitstream (`src/backend/mouse_streamer.py`) provides a **USB Full‑Speed passthrough**, a **tiny UART‑driven injector**, and a **handshake mechanism** with visual feedback.  
+> The Rust CLI (`packetry_injector`) performs an initial handshake with the FPGA, provides command acknowledgments, and acts as a gateway for network commands.
 
-HurricaneFPGA explores low‑level USB manipulation on the **[Cynthion FPGA](https://greatscottgadgets.com/cynthion/)**. It ships:
+HurricaneFPGA explores low‑level USB manipulation on the **[Cynthion FPGA](https://greatscottgadgets.com/cynthion/)**. It ships:
 
 - **Amaranth/LUNA gateware** – FS passthrough + UART HID injection.
 - **Rust CLI** – network‑to‑UART bridge for easy scripting.
@@ -32,10 +32,12 @@ HurricaneFPGA explores low‑level USB manipulation on the **[Cynthion FPGA](ht
 
 ## Features
 
-- **USB passthrough** – Full‑/Low‑Speed packets flow between **TARGET (J2)** ⇄ **CONTROL (J3)**.
-- **HID injection** – FPGA can splice one‑byte‑per‑axis mouse reports (`buttons, dx, dy`).
-- **UART control** – Send _exactly_ three bytes over PMOD A @ 115200 baud to inject.
+- **USB passthrough** – Full‑/Low‑Speed packets flow between **TARGET (J2)** ⇄ **CONTROL (J3)**.
+- **HID injection** – FPGA can splice one‑byte‑per‑axis mouse reports (`buttons, dx, dy`).
+- **UART control** – Send _exactly_ three bytes over PMOD A @ 115200 baud to inject.
 - **Rust gateway** – Accepts UDP strings (`buttons,dx,dy`) → forwards raw UART bytes.
+- **Handshake protocol** – Rust app and FPGA perform an initial handshake with LED feedback.
+- **Command acknowledgment** – FPGA sends ACK/NAK responses with error codes.
 
 ---
 
@@ -69,8 +71,8 @@ You only need docker for the initial build now, use `docker build -t amaranth-cy
 ### 4. Build the Rust CLI
 
 ```bash
-git clone https://github.com/yourusername/kmboxetry.git
-cd kmboxetry
+git clone https://github.com/ramseymcgrath/hurricanefpga.git
+cd src
 cargo build --release
 ```
 Binary: `target/release/packetry_injector`.
@@ -93,7 +95,7 @@ Binary: `target/release/packetry_injector`.
 
 ## Usage
 
-### Running the Rust gateway
+### Running the Rust gateway
 
 ```bash
 # list serial ports
@@ -105,54 +107,46 @@ target/release/packetry_injector \
     --control-serial /dev/ttyUSB0  # or COM3 on Windows
 ```
 
-### Sending commands
+When the application starts, it will:
+1. Perform an initial handshake with the FPGA
+2. Upon successful handshake, **LED 4** on the Cynthion board will light up
+3. The handshake ensures the UART connection is working properly before any commands are sent
 
-Each UDP payload is an ASCII string: `buttons,dx,dy`.
+### Command Acknowledgments
 
-```bash
-# left‑click
-echo "1,0,0" | nc -u -w0 127.0.0.1 9001
+The FPGA now provides acknowledgments for each command sent:
+- **ACK (0x06)** - Command was successfully received and processed
+- **NAK (0x15) + Error Code** - Command failed with specific error code:
+  - `0x01` - Value out of range
+  - `0x02` - Syntax error
+  - `0x03` - System busy
+  - `0x04` - Buffer overflow
 
-# move right 20 / down 5
-echo "0,20,5" | nc -u -w0 127.0.0.1 9001
-```
-
-Python snippet:
-
-```python
-import socket, time
-sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-addr = ("127.0.0.1", 9001)
-
-def send(btn, dx, dy):
-    msg = f"{btn},{dx},{dy}".encode()
-    sock.sendto(msg, addr)
-
-send(0, 10, 0)   # move
-time.sleep(0.1)
-send(1, 0, 0)    # press
-time.sleep(0.1)
-send(0, 0, 0)    # release
-```
+The Rust CLI automatically handles these acknowledgments.
 
 ---
 
 ## Architecture
 
 ```text
-┌────────────┐  UDP  ┌──────────────────┐  Serial  ┌────────────┐
-│ Script/App │ ────► │ Rust Gateway CLI │ ───────► │ UART Dongle│
-└────────────┘       │ packetry_injector│          │ (FT232)   │
-                     └────────┬─────────┘          └─────┬──────┘
-                              │ 115200 8N1               │
-                              ▼                          ▼
-                      ┌──────────────────────────────────────────┐
-                      │  Cynthion FPGA (ECP5)                    │
-                      │  • ULPI PHY J2 ↔ Host PC                │
-                      │  • ULPI PHY J3 ↔ Target Device          │
-                      │  • UART Rx/Tx ↔ PMOD A                  │
-                      │  • Amaranth/LUNA passthrough + injector │
-                      └──────────────────────────────────────────┘
+                     ┌──────────────────┐  Serial  ┌────────────┐
+                     │ Rust Gateway CLI │ ───────► │ UART Dongle│
+                     │ packetry_injector│          │ (FT232)   │
+                     └──────────────────┘          └─────┬──────┘
+                                                         │
+                                                         ▼
+                      ┌────────────────────────────────────────┐
+       ─────────────> │  Cynthion FPGA (ECP5)                  │
+      |DEVICE|        │  • ULPI AUX  ↔ Host PC                 │
+                      │  • ULPI HOST ↔ Target Device           │
+                      │  • UART Rx/Tx ↔ PMOD A                 │
+                      │  • Amaranth/LUNA passthrough/injector  │
+                      └────────────────────────────────────────┘
+                                                         |
+                                                         |
+                                                         ▼
+                                                      HOST PC
+
 ```
 
 ---
@@ -164,7 +158,7 @@ send(0, 0, 0)    # release
 cargo build && cargo test
 
 # Gateware (needs Python env)
-python src/backend/cynthion_passthrough.py
+python src/backend/top.py
 ```
 
 ### Coverage
@@ -198,6 +192,16 @@ open coverage/tarpaulin-report.html
 * Confirm UDP target IP/port & firewall.
 </details>
 
+<details>
+<summary>Handshake fails or LED 4 doesn't light up</summary>
+
+* Make sure your UART adapter is properly connected to PMOD A.
+* Check that the FPGA has the latest gateware flashed.
+* Try resetting the FPGA (RST button) and restarting the Rust application.
+* Verify that both TX and RX lines are correctly connected and working.
+* Check if there are any errors reported in the terminal by the Rust application.
+</details>
+
 ### udev rules (Linux)
 
 ```udev
@@ -223,4 +227,3 @@ Distributed under the terms of the **MIT License** – see `LICENSE`.
 
 * **Cynthion** by *Great Scott Gadgets*.
 * Built with **Amaranth HDL**, **LUNA USB framework**, and a stack of fantastic Rust crates.
-
