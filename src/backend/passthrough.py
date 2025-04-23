@@ -133,7 +133,7 @@ class PHYTranslatorHandler(Elaboratable):
             aux_ulpi_res = platform.request("aux_phy", 0)
             # Device connection uses TARGET port
             target_ulpi_res = platform.request("target_phy", 0)
-            # VBUS input enable signals (Active Low)
+            # VBUS input enable signals (Active High)
             control_vbus_en = platform.request("control_vbus_in_en", 0)
             aux_vbus_en = platform.request("aux_vbus_in_en", 0)
 
@@ -147,23 +147,23 @@ class PHYTranslatorHandler(Elaboratable):
                 UTMITranslator(ulpi=target_ulpi_res)
             )
 
-            # Enable VBUS input from both CONTROL and AUX ports (Active LOW enable)
+            # Enable VBUS input from both CONTROL and AUX ports (Active HIGH enable)
             m.d.comb += [
-                control_vbus_en.o.eq(0),  # Enable Control VBUS input
-                aux_vbus_en.o.eq(0),  # Enable Aux VBUS input
+                control_vbus_en.o.eq(1),  # Enable Control VBUS input
+                aux_vbus_en.o.eq(1),  # Enable Aux VBUS input
             ]
 
         # Configure both PHYs with standard settings
         m.d.comb += [
             self.host_translator.op_mode.eq(0b00),
-            self.host_translator.xcvr_select.eq(0b01),
-            self.host_translator.term_select.eq(1),
+            self.host_translator.xcvr_select.eq(0b10),  # HS mode
+            self.host_translator.term_select.eq(0),  # Disable termination
             self.host_translator.suspend.eq(0),
         ]
         m.d.comb += [
             self.dev_translator.op_mode.eq(0b00),
-            self.dev_translator.xcvr_select.eq(0b01),
-            self.dev_translator.term_select.eq(1),
+            self.dev_translator.xcvr_select.eq(0b10),  # HS mode
+            self.dev_translator.term_select.eq(0),  # Disable termination
             self.dev_translator.suspend.eq(0),
         ]
 
