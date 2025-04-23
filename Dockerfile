@@ -20,4 +20,4 @@ ENV BUILD_LOCAL="1"
 COPY src/backend/ /work
 WORKDIR /work
 # Default command (change if needed)
-CMD ["python", "src/backend/mouse_streamer.py"]
+CMD ["python", "mouse_streamer.py"]
