@@ -74,7 +74,7 @@ jobs:
           if ! command -v cargo-tarpaulin &> /dev/null; then
               echo "Installing cargo-tarpaulin on runner..."
                # Adjust installation based on runner OS if needed, assume Linux/Cargo install works
-              cargo install cargo-tarpaulin --version 0.27
+              cargo install cargo-tarpaulin 
           fi
           # Run tarpaulin natively
           cargo tarpaulin --out Xml --output-dir coverage \
