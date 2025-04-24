@@ -2,7 +2,7 @@
 
 # -*- coding: utf-8 -*-
 
-from amaranth import Elaboratable, Module, Signal, DomainRenamer, Cat, C, Record
+from amaranth import Elaboratable, Module, Signal, DomainRenamer, Cat, C, Record, Array
 from amaranth.build.res import ResourceError
 from amaranth.lib.fifo import SyncFIFOBuffered, AsyncFIFOBuffered
 from luna.gateware.interface.ulpi import UTMITranslator
@@ -999,14 +999,15 @@ class USBDataPassthroughHandler(Elaboratable):
         ]
 
         # Make sure UART TX activity is visible
-        m.d.comb += self.o_uart_tx_activity.eq(
-            uart_tx_handler.o_uart_valid | (self.use_control_port & usb_serial.tx.valid)
-        )
-
-        # Make command handshake completion signal visible for LED 4
-        m.d.comb += [
-            cmd_parser.i_handshake_en.eq(1),  # Enable handshake protocol
-        ]
+        # Use safe access pattern for usb_serial which might not be defined
+        if self.use_control_port:
+            # Only use this part when usb_serial is guaranteed to exist
+            m.d.comb += self.o_uart_tx_activity.eq(
+                uart_tx_handler.o_uart_valid | usb_serial.tx.valid
+            )
+        else:
+            # Fallback when only using UART
+            m.d.comb += self.o_uart_tx_activity.eq(uart_tx_handler.o_uart_valid)
 
         # For debugging: send a test message on startup
         startup_message = "Hurricane FPGA USB Proxy Initialized\r\n"
@@ -1017,12 +1018,27 @@ class USBDataPassthroughHandler(Elaboratable):
 
         with m.If(~msg_sent):
             # Basic message sender for startup
-            with m.If(
-                uart_tx_handler.i_tx_stream.ready
-                | (self.use_control_port & usb_serial.tx.ready)
-            ):
+            if self.use_control_port:
+                # If using CDC-ACM USB serial
+                with m.If(usb_serial.tx.ready):
+                    m.d.comb += [
+                        usb_serial.tx.valid.eq(1),
+                        usb_serial.tx.payload.eq(startup_msg_rom[msg_counter]),
+                        usb_serial.tx.first.eq(msg_counter == 0),
+                        usb_serial.tx.last.eq(msg_counter == len(startup_message) - 1),
+                    ]
+
+                    # Increment counter or mark as sent
+                    with m.If(msg_counter == len(startup_message) - 1):
+                        m.d.sync += [
+                            msg_counter.eq(0),
+                            msg_sent.eq(1),
+                        ]
+                    with m.Else():
+                        m.d.sync += msg_counter.eq(msg_counter + 1)
+            else:
                 # If using UART
-                if not self.use_control_port:
+                with m.If(uart_tx_handler.i_tx_stream.ready):
                     m.d.comb += [
                         uart_tx_handler.i_tx_stream.valid.eq(1),
                         uart_tx_handler.i_tx_stream.payload.eq(
@@ -1033,23 +1049,15 @@ class USBDataPassthroughHandler(Elaboratable):
                             msg_counter == len(startup_message) - 1
                         ),
                     ]
-                # If using CDC-ACM USB serial
-                else:
-                    m.d.comb += [
-                        usb_serial.tx.valid.eq(1),
-                        usb_serial.tx.payload.eq(startup_msg_rom[msg_counter]),
-                        usb_serial.tx.first.eq(msg_counter == 0),
-                        usb_serial.tx.last.eq(msg_counter == len(startup_message) - 1),
-                    ]
 
-                # Increment counter or mark as sent
-                with m.If(msg_counter == len(startup_message) - 1):
-                    m.d.sync += [
-                        msg_counter.eq(0),
-                        msg_sent.eq(1),
-                    ]
-                with m.Else():
-                    m.d.sync += msg_counter.eq(msg_counter + 1)
+                    # Increment counter or mark as sent
+                    with m.If(msg_counter == len(startup_message) - 1):
+                        m.d.sync += [
+                            msg_counter.eq(0),
+                            msg_sent.eq(1),
+                        ]
+                    with m.Else():
+                        m.d.sync += msg_counter.eq(msg_counter + 1)
 
         return m
 
