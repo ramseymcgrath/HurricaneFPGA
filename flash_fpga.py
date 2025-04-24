@@ -266,6 +266,9 @@ def main():
     """Main function for the flashing tool."""
     parser = argparse.ArgumentParser(description="Hurricane FPGA Flashing Tool")
     parser.add_argument(
+        "--no-build", "-n", action="store_true", help="Skip building the bitstream"
+    )
+    parser.add_argument(
         "--bitstream",
         "-b",
         type=str,
