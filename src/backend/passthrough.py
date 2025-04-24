@@ -92,8 +92,8 @@ class PHYTranslatorHandler(Elaboratable):
         self.platform = platform
 
         # Outputs - UTMI translators
-        self.host_translator = None  # AUX port
-        self.dev_translator = None  # TARGET port
+        self.host_translator = None  # TARGET port (PC connection)
+        self.dev_translator = None  # AUX port (device connection)
         self.control_translator = None  # CONTROL port for commands
 
         # Status
@@ -112,19 +112,19 @@ class PHYTranslatorHandler(Elaboratable):
                 ("stp", 1),
                 ("rst", 1),
             ]
-            # Host is now AUX
-            aux_ulpi_res = Record([("i", ulpi_bus_layout), ("o", ulpi_bus_layout)])
-            # Device is now TARGET
+            # Host is now TARGET
             target_ulpi_res = Record([("i", ulpi_bus_layout), ("o", ulpi_bus_layout)])
+            # Device is now AUX
+            aux_ulpi_res = Record([("i", ulpi_bus_layout), ("o", ulpi_bus_layout)])
             # Control for command interface
             control_ulpi_res = Record([("i", ulpi_bus_layout), ("o", ulpi_bus_layout)])
 
             # Instantiate translators with dummy resources
             m.submodules.host_translator = self.host_translator = DomainRenamer("sync")(
-                UTMITranslator(ulpi=aux_ulpi_res)
+                UTMITranslator(ulpi=target_ulpi_res)
             )
             m.submodules.dev_translator = self.dev_translator = DomainRenamer("sync")(
-                UTMITranslator(ulpi=target_ulpi_res)
+                UTMITranslator(ulpi=aux_ulpi_res)
             )
             m.submodules.control_translator = self.control_translator = DomainRenamer(
                 "sync"
@@ -135,10 +135,10 @@ class PHYTranslatorHandler(Elaboratable):
             aux_vbus_en = Record([("o", 1)])
         else:
             # Request actual PHY resources
-            # Host connection uses AUX port
-            aux_ulpi_res = platform.request("aux_phy", 0)
-            # Device connection uses TARGET port
+            # Host connection uses TARGET port
             target_ulpi_res = platform.request("target_phy", 0)
+            # Device connection uses AUX port
+            aux_ulpi_res = platform.request("aux_phy", 0)
             # Control port for command interface
             try:
                 control_ulpi_res = platform.request("control_phy", 0)
@@ -159,13 +159,13 @@ class PHYTranslatorHandler(Elaboratable):
             aux_vbus_en = platform.request("aux_vbus_in_en", 0)
 
             # Instantiate translators with actual resources
-            # Host translator connects to AUX PHY
+            # Host translator connects to TARGET PHY
             m.submodules.host_translator = self.host_translator = DomainRenamer("sync")(
-                UTMITranslator(ulpi=aux_ulpi_res)
-            )
-            # Device translator connects to TARGET PHY
-            m.submodules.dev_translator = self.dev_translator = DomainRenamer("sync")(
                 UTMITranslator(ulpi=target_ulpi_res)
+            )
+            # Device translator connects to AUX PHY
+            m.submodules.dev_translator = self.dev_translator = DomainRenamer("sync")(
+                UTMITranslator(ulpi=aux_ulpi_res)
             )
 
             # Enable VBUS input from both CONTROL and AUX ports (Active HIGH enable)
@@ -200,8 +200,8 @@ class USBDataPassthroughHandler(Elaboratable):
         )
 
         # Outputs for status LEDs
-        self.o_host_packet_activity = Signal()  # Activity on AUX port (to/from PC)
-        self.o_dev_packet_activity = Signal()  # Activity on TARGET port (to/from mouse)
+        self.o_host_packet_activity = Signal()  # Activity on TARGET port (to/from PC)
+        self.o_dev_packet_activity = Signal()  # Activity on AUX port (to/from mouse)
         self.o_uart_rx_activity = Signal()  # Activity on UART RX
         self.o_uart_tx_activity = Signal()  # Activity on UART TX
         self.o_command_rx_activity = (
@@ -748,9 +748,9 @@ class USBDataPassthroughHandler(Elaboratable):
         ]
 
         # Convert 10-bit streams to standard 8-bit payload streams
-        # Data stream coming FROM the host (PC via AUX PHY)
+        # Data stream coming FROM the host (PC via TARGET PHY)
         host_logic_in_stream = USBOutStreamInterface()  # Terminology: OUT of PC
-        # Data stream coming FROM the device (Mouse via TARGET PHY)
+        # Data stream coming FROM the device (Mouse via AUX PHY)
         dev_logic_in_stream = USBInStreamInterface()  # Terminology: IN to PC
 
         m.d.comb += [
@@ -774,7 +774,7 @@ class USBDataPassthroughHandler(Elaboratable):
             injector.dy.eq(self.i_dy),
         ]
 
-        # --- Host -> Device Path (AUX -> TARGET) ---
+        # --- Host -> Device Path (TARGET -> AUX) ---
         # Data from PC (host_logic_in_stream) goes directly to the device TX CDC fifo
         dev_tx_cdc_input_stream = StreamInterface(payload_width=8)
         m.d.comb += host_logic_in_stream.stream_eq(dev_tx_cdc_input_stream)
@@ -791,7 +791,7 @@ class USBDataPassthroughHandler(Elaboratable):
             dev_tx_cdc_input_stream.ready.eq(dev_tx_cdc.w_rdy),
         ]
 
-        # --- Device -> Host Path (TARGET -> AUX) ---
+        # --- Device -> Host Path (AUX -> TARGET) ---
         # Data from Mouse (dev_logic_in_stream) and Injector go into Arbiter
         m.d.comb += dev_logic_in_stream.stream_eq(arbiter.passthrough_in)
         m.d.comb += injector.source.stream_eq(arbiter.inject_in)

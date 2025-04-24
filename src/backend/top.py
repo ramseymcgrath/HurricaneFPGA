@@ -208,10 +208,10 @@ class HurricaneFPGATop(Elaboratable):
                 ),  # LED 0: Command activity (CONTROL port or UART)
                 leds.led_outputs[1].eq(
                     analyzer.o_host_packet_activity
-                ),  # LED 1: Host (AUX) activity
+                ),  # LED 1: Host (TARGET) activity
                 leds.led_outputs[2].eq(
                     analyzer.o_dev_packet_activity
-                ),  # LED 2: Device (TARGET) activity
+                ),  # LED 2: Device (AUX) activity
                 leds.led_outputs[3].eq(
                     analyzer.o_uart_tx_activity
                 ),  # LED 3: Debug output activity
