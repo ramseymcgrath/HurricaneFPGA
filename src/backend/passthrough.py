@@ -391,12 +391,6 @@ class USBDataPassthroughHandler(Elaboratable):
             print(
                 "WARNING: One or more USB translators are not initialized yet. Using fallback initialization..."
             )
-
-            # When the PHYTranslator reports that translators are None but the resources have been requested,
-            # this means that something went wrong with the initialization, but we shouldn't try
-            # to request the resources again (which will fail with "already been requested").
-            #
-            # Instead, we need to get references to the actual translator objects:
             try:
                 # Try to extract the submodules directly from the PHYTranslatorHandler
                 for name, sub in phy_handler._submodules.items():
@@ -433,13 +427,7 @@ class USBDataPassthroughHandler(Elaboratable):
                 print(
                     f"WARNING: Could not retrieve translators from PHYTranslatorHandler: {e}"
                 )
-
-            # DO NOT try to create duplicate translators - they will fail to get the resources
-            # that have already been requested
             print("NOTE: Using dummy operations for any missing translators")
-
-            # Let the error handling in other code sections handle the case where translators
-            # remain None
 
         # --- FIFOs ---
         cdc_fifo_width = 10  # 8 data + first + last
@@ -519,12 +507,6 @@ class USBDataPassthroughHandler(Elaboratable):
             dev_hyperram_in_stream = StreamInterface(
                 payload_width=16
             )  # Input to device FIFO (to TARGET)
-
-            # Create a shared memory arbiter for the host and device FIFOs
-            # We need to modify our approach because both FIFOs can't drive
-            # the same PSRAM controller simultaneously
-
-            # Create individual FIFOs for buffering
             m.submodules.host_buffer_fifo = host_buffer_fifo = SyncFIFOBuffered(
                 width=16, depth=hyperram_out_buf_depth
             )
