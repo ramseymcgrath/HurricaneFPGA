@@ -31,25 +31,53 @@ except ImportError:
 
 def find_bitstream(build_dir=None):
     """Find the most recently modified bitstream file."""
-    if build_dir is None:
-        build_dir = Path.cwd() / "build" / "gateware"
-    else:
-        build_dir = Path(build_dir)
+    # First, try the standard build directory paths
+    possible_paths = [
+        Path.cwd() / "build" / "gateware",  # Default
+        Path("/home/ramsey/code/HurricaneFPGA/build"),  # Absolute path
+        Path.cwd() / "build",  # Just the build directory
+        Path.cwd(),  # Current directory
+    ]
 
-    # Check if the directory exists
-    if not build_dir.exists():
-        print(f"⚠️ Build directory not found: {build_dir}")
-        return None
+    # Add custom directory if provided
+    if build_dir:
+        possible_paths.insert(0, Path(build_dir))
 
-    # Look for .bit files
-    bit_files = list(build_dir.glob("*.bit"))
-    if not bit_files:
-        print(f"⚠️ No .bit files found in {build_dir}")
-        return None
+    # Check each possible path
+    for path in possible_paths:
+        if not path.exists():
+            print(f"Directory not found: {path}")
+            continue
 
-    # Sort by modification time (newest first)
-    bit_files.sort(key=lambda x: x.stat().st_mtime, reverse=True)
-    return bit_files[0]
+        # Look for .bit files
+        bit_files = list(path.glob("**/*.bit"))  # Recursive search
+        if bit_files:
+            # Sort by modification time (newest first)
+            bit_files.sort(key=lambda x: x.stat().st_mtime, reverse=True)
+            print(f"Found {len(bit_files)} bitstream files in {path}")
+            return bit_files[0]
+
+    # Also try using locate if available on the system
+    try:
+        import subprocess
+
+        locate_result = subprocess.run(
+            ["locate", "-l", "1", "--regex", ".*HurricaneFPGA.*\.bit$"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if locate_result.returncode == 0 and locate_result.stdout.strip():
+            path = Path(locate_result.stdout.strip())
+            if path.exists():
+                print(f"Found bitstream using locate: {path}")
+                return path
+    except (ImportError, FileNotFoundError):
+        # locate command not available or failed
+        pass
+
+    print("⚠️ No .bit files found in any of the expected directories")
+    return None
 
 
 def build_bitstream(verbose=False):
