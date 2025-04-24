@@ -389,65 +389,29 @@ class USBDataPassthroughHandler(Elaboratable):
         # Check if translators are properly initialized
         if host_translator is None or dev_translator is None:
             print(
-                "WARNING: Translators not available from PHYTranslatorHandler. Creating direct translators..."
+                "WARNING: One or more USB translators are not initialized yet. Using fallback initialization..."
             )
 
-            # Direct initialization of translators if they weren't provided by the handler
+            # When the PHYTranslator reports that translators are None but the resources have been requested,
+            # this means that something went wrong with the initialization, but we shouldn't try
+            # to request the resources again (which will fail with "already been requested").
+            #
+            # Instead, we need to get references to the actual translator objects:
             try:
-                # Determine the correct PHY names based on platform version
-                aux_phy_name = (
-                    "aux_phy"
-                    if hasattr(platform, "version") and platform.version >= (0, 6)
-                    else "host_phy"
-                )
-                target_phy_name = "target_phy"  # Always the same
-
-                print(
-                    f"Direct PHY initialization: Using {aux_phy_name} and {target_phy_name}"
-                )
-
-                # Try for host translator (AUX/HOST PHY)
-                if host_translator is None:
-                    try:
-                        aux_ulpi_res = platform.request(aux_phy_name, 0)
-                        m.submodules.direct_host_translator = host_translator = (
-                            DomainRenamer("sync")(UTMITranslator(ulpi=aux_ulpi_res))
-                        )
+                # Try to extract the submodules directly from the PHYTranslatorHandler
+                for name, sub in phy_handler._submodules.items():
+                    if name == "host_translator" and host_translator is None:
+                        host_translator = sub
                         print(
-                            f"Direct initialization of host_translator successful using {aux_phy_name}"
+                            "Retrieved host_translator directly from phy_handler submodules"
                         )
-                    except ResourceError as e:
-                        # Try alternate name if primary failed
-                        alt_aux_name = (
-                            "host_phy" if aux_phy_name == "aux_phy" else "aux_phy"
-                        )
-                        try:
-                            aux_ulpi_res = platform.request(alt_aux_name, 0)
-                            m.submodules.direct_host_translator = host_translator = (
-                                DomainRenamer("sync")(UTMITranslator(ulpi=aux_ulpi_res))
-                            )
-                            print(
-                                f"Direct initialization of host_translator successful using alternate {alt_aux_name}"
-                            )
-                        except ResourceError as e2:
-                            print(
-                                f"ERROR: Could not create direct host_translator: {e2}"
-                            )
-
-                # Try for device translator (TARGET PHY)
-                if dev_translator is None:
-                    try:
-                        target_ulpi_res = platform.request(target_phy_name, 0)
-                        m.submodules.direct_dev_translator = dev_translator = (
-                            DomainRenamer("sync")(UTMITranslator(ulpi=target_ulpi_res))
-                        )
+                    if name == "dev_translator" and dev_translator is None:
+                        dev_translator = sub
                         print(
-                            f"Direct initialization of dev_translator successful using {target_phy_name}"
+                            "Retrieved dev_translator directly from phy_handler submodules"
                         )
-                    except ResourceError as e:
-                        print(f"ERROR: Could not create direct dev_translator: {e}")
 
-                # Configure translators if they were successfully created
+                # Configure translators if they were successfully retrieved
                 if host_translator is not None:
                     m.d.comb += [
                         host_translator.op_mode.eq(0b00),
@@ -455,6 +419,7 @@ class USBDataPassthroughHandler(Elaboratable):
                         host_translator.term_select.eq(0),  # Disable termination
                         host_translator.suspend.eq(0),
                     ]
+                    print("Configured retrieved host_translator")
 
                 if dev_translator is not None:
                     m.d.comb += [
@@ -463,9 +428,18 @@ class USBDataPassthroughHandler(Elaboratable):
                         dev_translator.term_select.eq(0),  # Disable termination
                         dev_translator.suspend.eq(0),
                     ]
+                    print("Configured retrieved dev_translator")
             except Exception as e:
-                print(f"CRITICAL ERROR in direct translator initialization: {e}")
-                # Leave the translators as None, fallback logic will handle it
+                print(
+                    f"WARNING: Could not retrieve translators from PHYTranslatorHandler: {e}"
+                )
+
+            # DO NOT try to create duplicate translators - they will fail to get the resources
+            # that have already been requested
+            print("NOTE: Using dummy operations for any missing translators")
+
+            # Let the error handling in other code sections handle the case where translators
+            # remain None
 
         # --- FIFOs ---
         cdc_fifo_width = 10  # 8 data + first + last
