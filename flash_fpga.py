@@ -231,8 +231,8 @@ def program_via_dfu(bitstream_file=None, verbose=False):
             try:
                 with open(bitstream_file, "rb") as f:
                     bitstream = f.read()
-                    # Actually flash the device
-                    programmer.flash(bitstream, offset=0)
+                # Actually flash the device
+                programmer.flash(bitstream, offset=0)
             except Exception as e:
                 print(f"❌ Error flashing device: {e}")
                 return False
