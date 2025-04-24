@@ -14,20 +14,8 @@ import time
 import argparse
 import subprocess
 from pathlib import Path
-
-# Add the project root to the path
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-
-# Try to import LUNA-specific modules
-try:
-    from luna.gateware.platform import get_appropriate_platform
-    from luna.apollo.dfu import USBDFUManager
-except ImportError:
-    print(
-        "ERROR: Failed to import LUNA modules. Please ensure the environment is set up correctly."
-    )
-    print("You may need to install LUNA: pip install luna")
-    sys.exit(1)
+from apollo_fpga import ApolloDebugger
+from luna.gateware.platform import get_appropriate_platform
 
 
 def find_bitstream(build_dir=None):
@@ -214,7 +202,7 @@ def program_via_dfu(bitstream_file=None, verbose=False):
     # Put device in DFU mode if needed
     try:
         # Try to find DFU devices
-        dfu = USBDFUManager()
+        device = ApolloDebugger(force_offline=True)
 
         if not dfu.device:
             print("\n⚠️ No DFU device found. Please put your device in DFU mode:")
@@ -225,15 +213,15 @@ def program_via_dfu(bitstream_file=None, verbose=False):
             input("\nPress Enter when ready to check again...")
 
             # Try again after the user confirms
-            dfu = USBDFUManager()
+            dfu = ApolloDebugger(force_offline=True)
 
         if not dfu.device:
             print("❌ Still no DFU device found. Check connections and try again.")
             return False
 
         # Show device info
-        print(f"✅ Found DFU device: {dfu.device.product_string}")
-        print(f"   Manufacturer: {dfu.device.manufacturer_string}")
+        print(f"✅ Found DFU device: {dfu.device.product}")
+        print(f"   Manufacturer: {dfu.device.manufacturer}")
         print(f"   Serial: {dfu.device.serial_number}")
 
         # Start programming with timing
@@ -263,7 +251,7 @@ def program_via_dfu(bitstream_file=None, verbose=False):
                 print("\n")
 
             # Actually flash the device
-            dfu.write(0, bitstream)
+            dfu.device.write(0, bitstream)
 
             # Calculate elapsed time
             elapsed = time.time() - start_time
@@ -282,8 +270,7 @@ def program_via_dfu(bitstream_file=None, verbose=False):
 
             # Reset the device
             print("🔄 Resetting device...")
-            dfu.detach_and_reset()
-
+            dfu.device.reset()
             return True
 
         except Exception as e:
