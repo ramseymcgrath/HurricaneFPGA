@@ -988,6 +988,87 @@ class USBDataPassthroughHandler(Elaboratable):
             arbiter_out_stream.ready.eq(host_tx_cdc.w_rdy),
         ]
 
+        # --- Packet Activity Indicators ---
+        # Add explicit activity indicators for USB packet detection
+        # These will be used to drive the activity LEDs
+        usb_host_activity = Signal(reset=0)
+        usb_dev_activity = Signal(reset=0)
+
+        # Create activity indicators for host (AUX/PC) traffic
+        if host_translator is not None:
+            # Set activity signal when valid data is received from host
+            with m.If(host_translator.rx_valid):
+                m.d.sync += usb_host_activity.eq(1)
+            with m.Else():
+                m.d.sync += usb_host_activity.eq(0)
+
+        # Create activity indicators for device (TARGET/Mouse) traffic
+        if dev_translator is not None:
+            # Set activity signal when valid data is received from device
+            with m.If(dev_translator.rx_valid):
+                m.d.sync += usb_dev_activity.eq(1)
+            with m.Else():
+                m.d.sync += usb_dev_activity.eq(0)
+
+        # Connect activity signals to output pins for LEDs
+        m.d.comb += [
+            self.o_host_packet_activity.eq(usb_host_activity),
+            self.o_dev_packet_activity.eq(usb_dev_activity),
+        ]
+
+        # Make sure UART TX activity is visible
+        m.d.comb += self.o_uart_tx_activity.eq(
+            uart_tx_handler.o_uart_valid | (self.use_control_port & usb_serial.tx.valid)
+        )
+
+        # Make command handshake completion signal visible for LED 4
+        m.d.comb += [
+            cmd_parser.i_handshake_en.eq(1),  # Enable handshake protocol
+        ]
+
+        # For debugging: send a test message on startup
+        startup_message = "Hurricane FPGA USB Proxy Initialized\r\n"
+        startup_msg_rom = Array([ord(c) for c in startup_message])
+
+        msg_counter = Signal(8, reset=0)
+        msg_sent = Signal(reset=0)
+
+        with m.If(~msg_sent):
+            # Basic message sender for startup
+            with m.If(
+                uart_tx_handler.i_tx_stream.ready
+                | (self.use_control_port & usb_serial.tx.ready)
+            ):
+                # If using UART
+                if not self.use_control_port:
+                    m.d.comb += [
+                        uart_tx_handler.i_tx_stream.valid.eq(1),
+                        uart_tx_handler.i_tx_stream.payload.eq(
+                            startup_msg_rom[msg_counter]
+                        ),
+                        uart_tx_handler.i_tx_stream.first.eq(msg_counter == 0),
+                        uart_tx_handler.i_tx_stream.last.eq(
+                            msg_counter == len(startup_message) - 1
+                        ),
+                    ]
+                # If using CDC-ACM USB serial
+                else:
+                    m.d.comb += [
+                        usb_serial.tx.valid.eq(1),
+                        usb_serial.tx.payload.eq(startup_msg_rom[msg_counter]),
+                        usb_serial.tx.first.eq(msg_counter == 0),
+                        usb_serial.tx.last.eq(msg_counter == len(startup_message) - 1),
+                    ]
+
+                # Increment counter or mark as sent
+                with m.If(msg_counter == len(startup_message) - 1):
+                    m.d.sync += [
+                        msg_counter.eq(0),
+                        msg_sent.eq(1),
+                    ]
+                with m.Else():
+                    m.d.sync += msg_counter.eq(msg_counter + 1)
+
         return m
 
 
