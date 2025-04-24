@@ -202,7 +202,7 @@ def program_via_dfu(bitstream_file=None, verbose=False):
     # Put device in DFU mode if needed
     try:
         # Try to find DFU devices
-        device = ApolloDebugger(force_offline=True)
+        device = ApolloDebugger()
 
         if not device:
             print("\n⚠️ No DFU device found. Please put your device in DFU mode:")
@@ -213,16 +213,14 @@ def program_via_dfu(bitstream_file=None, verbose=False):
             input("\nPress Enter when ready to check again...")
 
             # Try again after the user confirms
-            dfu = ApolloDebugger(force_offline=True)
+            device = ApolloDebugger()
 
-        if not dfu.device:
+        if not device:
             print("❌ Still no DFU device found. Check connections and try again.")
             return False
 
         # Show device info
-        print(f"✅ Found DFU device: {dfu.device.product}")
-        print(f"   Manufacturer: {dfu.device.manufacturer}")
-        print(f"   Serial: {dfu.device.serial_number}")
+        print(f"✅ Found DFU device: {device.detect_connected_version()}")
 
         # Start programming with timing
         print("\n⏳ Programming device (this may take 30-60 seconds)...")
@@ -232,26 +230,8 @@ def program_via_dfu(bitstream_file=None, verbose=False):
         try:
             with open(bitstream_file, "rb") as f:
                 bitstream = f.read()
-
-            # Show progress information if verbose
-            if verbose:
-                chunk_size = 4096
-                total_chunks = (len(bitstream) + chunk_size - 1) // chunk_size
-
-                print(f"Sending {len(bitstream)} bytes in {total_chunks} chunks...")
-
-                # Custom manual implementation
-                for i in range(0, len(bitstream), chunk_size):
-                    chunk = bitstream[i : i + chunk_size]
-                    sys.stdout.write(
-                        f"\rProgress: {i//chunk_size + 1}/{total_chunks} chunks ({(i+len(chunk))*100/len(bitstream):.1f}%)"
-                    )
-                    sys.stdout.flush()
-                    # We don't actually chunk here, but we could if needed
-                print("\n")
-
-            # Actually flash the device
-            dfu.device.write(0, bitstream)
+                # Actually flash the device
+                device.flash(bitstream, offset=0)
 
             # Calculate elapsed time
             elapsed = time.time() - start_time
@@ -270,7 +250,7 @@ def program_via_dfu(bitstream_file=None, verbose=False):
 
             # Reset the device
             print("🔄 Resetting device...")
-            dfu.device.reset()
+            device.soft_reset()
             return True
 
         except Exception as e:
@@ -285,12 +265,6 @@ def program_via_dfu(bitstream_file=None, verbose=False):
 def main():
     """Main function for the flashing tool."""
     parser = argparse.ArgumentParser(description="Hurricane FPGA Flashing Tool")
-    parser.add_argument(
-        "--verbose", "-v", action="store_true", help="Enable verbose output"
-    )
-    parser.add_argument(
-        "--no-build", "-n", action="store_true", help="Skip building the bitstream"
-    )
     parser.add_argument(
         "--bitstream",
         "-b",
