@@ -225,37 +225,34 @@ def program_via_dfu(bitstream_file=None, verbose=False):
         # Start programming with timing
         print("\n⏳ Programming device (this may take 30-60 seconds)...")
         start_time = time.time()
-
-        # Program the bitstream
-        try:
-            with open(bitstream_file, "rb") as f:
-                bitstream = f.read()
-                # Actually flash the device
-                device.flash(bitstream, offset=0)
-
+        with device.jtag as jtag:
+            # Program the bitstream
+            programmer = device.create_jtag_programmer(jtag)
+            try:
+                with open(bitstream_file, "rb") as f:
+                    bitstream = f.read()
+                    # Actually flash the device
+                    programmer.flash(bitstream, offset=0)
+            except Exception as e:
+                print(f"❌ Error flashing device: {e}")
+                return False
             # Calculate elapsed time
-            elapsed = time.time() - start_time
+        elapsed = time.time() - start_time
 
-            # Verify the time is reasonable (DFU programming should take at least a few seconds)
-            if elapsed < 2.0:
-                print(
-                    f"⚠️ Warning: Programming completed suspiciously quickly ({elapsed:.2f} seconds)"
-                )
-                print(
-                    "   This might indicate that the actual programming didn't occur."
-                )
-                print("   Try running with --verbose for more details.")
-            else:
-                print(f"✅ Programming complete! Took {elapsed:.2f} seconds")
+        # Verify the time is reasonable (DFU programming should take at least a few seconds)
+        if elapsed < 2.0:
+            print(
+                f"⚠️ Warning: Programming completed suspiciously quickly ({elapsed:.2f} seconds)"
+            )
+            print("   This might indicate that the actual programming didn't occur.")
+            print("   Try running with --verbose for more details.")
+        else:
+            print(f"✅ Programming complete! Took {elapsed:.2f} seconds")
 
-            # Reset the device
-            print("🔄 Resetting device...")
-            device.soft_reset()
-            return True
-
-        except Exception as e:
-            print(f"❌ Programming failed: {e}")
-            return False
+        # Reset the device
+        print("🔄 Resetting device...")
+        device.soft_reset()
+        return True
 
     except Exception as e:
         print(f"❌ Error during DFU programming: {e}")
