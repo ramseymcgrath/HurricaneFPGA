@@ -21,7 +21,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 # Try to import LUNA-specific modules
 try:
     from luna.gateware.platform import get_appropriate_platform
-    from luna.apollo.dfu import USBDFUManager
 except ImportError:
     print(
         "ERROR: Failed to import LUNA modules. Please ensure the environment is set up correctly."
