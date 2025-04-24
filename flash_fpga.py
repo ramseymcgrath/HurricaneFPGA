@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 # Try to import LUNA-specific modules
 try:
     from luna.gateware.platform import get_appropriate_platform
+    from luna.apollo.dfu import USBDFUManager
 except ImportError:
     print(
         "ERROR: Failed to import LUNA modules. Please ensure the environment is set up correctly."
@@ -51,11 +52,60 @@ def find_bitstream(build_dir=None):
 
         # Look for .bit files
         bit_files = list(path.glob("**/*.bit"))  # Recursive search
+
+        # Also look for other ECP5 output files
+        if not bit_files:
+            bit_files = list(path.glob("**/*.svf"))  # SVF format
+        if not bit_files:
+            bit_files = list(path.glob("**/*.lpf"))  # LPF format
+        if not bit_files:
+            bit_files = list(path.glob("**/*.json"))  # Nextpnr JSON
+        if not bit_files:
+            # Common Amaranth/LUNA output formats
+            bit_files = list(path.glob("**/top.*.bin"))
+
         if bit_files:
             # Sort by modification time (newest first)
             bit_files.sort(key=lambda x: x.stat().st_mtime, reverse=True)
             print(f"Found {len(bit_files)} bitstream files in {path}")
             return bit_files[0]
+
+    # Also try running find command to locate recent bitstream files
+    try:
+        print("Searching for recently modified bitstream files...")
+        find_cmd = [
+            "find",
+            str(Path.cwd()),
+            "-name",
+            "*.bit",
+            "-o",
+            "-name",
+            "*.svf",
+            "-o",
+            "-name",
+            "top.*.bin",
+            "-type",
+            "f",
+            "-mtime",
+            "-1",
+        ]
+        find_result = subprocess.run(
+            find_cmd, capture_output=True, text=True, check=False
+        )
+
+        if find_result.returncode == 0 and find_result.stdout.strip():
+            # Parse the results and find the most recent file
+            files = [
+                Path(line.strip())
+                for line in find_result.stdout.splitlines()
+                if line.strip()
+            ]
+            if files:
+                files.sort(key=lambda x: x.stat().st_mtime, reverse=True)
+                print(f"Found recent bitstream using find: {files[0]}")
+                return files[0]
+    except (subprocess.SubprocessError, FileNotFoundError) as e:
+        print(f"Error running find command: {e}")
 
     # Also try using locate if available on the system
     try:
@@ -87,8 +137,13 @@ def build_bitstream(verbose=False):
     # Set environment variable to disable programming during build
     os.environ["BUILD_LOCAL"] = "1"
 
-    # Build command
-    build_cmd = [sys.executable, str(Path.cwd() / "src" / "backend" / "top.py")]
+    # Check if we need to use python-env instead of standard python
+    python_cmd = (
+        "python-env" if os.path.exists("/usr/local/bin/python-env") else sys.executable
+    )
+
+    # Build command - use python-env if it exists
+    build_cmd = [python_cmd, str(Path.cwd() / "src" / "backend" / "top.py")]
 
     # Add any LUNA CLI arguments that control the build
     if verbose:
