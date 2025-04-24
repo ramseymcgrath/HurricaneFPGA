@@ -36,7 +36,6 @@ HurricaneFPGA explores low‑level USB manipulation on the **[Cynthion FPGA](htt
 - **HID injection** – FPGA can splice one‑byte‑per‑axis mouse reports (`buttons, dx, dy`).
 - **UART control** – Send _exactly_ three bytes over PMOD A @ 115200 baud to inject.
 - **Rust gateway** – Accepts UDP strings (`buttons,dx,dy`) → forwards raw UART bytes.
-- **Handshake protocol** – Rust app and FPGA perform an initial handshake with LED feedback.
 - **Command acknowledgment** – FPGA sends ACK/NAK responses with error codes.
 
 ---
@@ -48,7 +47,6 @@ HurricaneFPGA explores low‑level USB manipulation on the **[Cynthion FPGA](htt
 | **Hardware** | Cynthion board · **UART↔USB adapter** (FT232 / CP210x) |
 | **FPGA toolchain** | [OSS CAD Suite](https://github.com/YosysHQ/oss-cad-suite-build) (Yosys + nextpnr‑ecp5 + Trellis) |
 | **Python** | Python 3 · `amaranth` · `luna` · `pyserial` |
-| **Flashing** | `dfu-util` |
 | **Rust** | Stable toolchain (`rustup`, `cargo`) |
 
 ---
@@ -61,12 +59,7 @@ You only need docker for the initial build now, use `docker build -t amaranth-cy
 
 ### 2. Flash the FPGA gateware
 
-1. **Enter DFU** – hold **USR**, tap **RST**, release **USR** (green **STAT** LED off).  
-2. **Flash**
-   ```bash
-   dfu-util -d 1d50:615b -a 0 -D build/gateware/top.bit
-   ```
-3. **Reset** – press **RST**; passthrough + injector are live.
+Python should be able to run this with `python top.py`
 
 ### 4. Build the Rust CLI
 
@@ -106,11 +99,6 @@ target/release/packetry_injector \
     --udp 127.0.0.1:9001 \
     --control-serial /dev/ttyUSB0  # or COM3 on Windows
 ```
-
-When the application starts, it will:
-1. Perform an initial handshake with the FPGA
-2. Upon successful handshake, **LED 4** on the Cynthion board will light up
-3. The handshake ensures the UART connection is working properly before any commands are sent
 
 ### Command Acknowledgments
 
@@ -183,24 +171,6 @@ open coverage/tarpaulin-report.html
 * Ensure VBUS on J3 (jumper) or self‑powered device.
 </details>
 
-<details>
-<summary>Gateway running but nothing happens</summary>
-
-* `--control-serial` port correct? Use `--list`.
-* Baud mismatch – pass `--control-baud 115200` if changed.
-* Verify TX/RX wiring on PMOD A.
-* Confirm UDP target IP/port & firewall.
-</details>
-
-<details>
-<summary>Handshake fails or LED 4 doesn't light up</summary>
-
-* Make sure your UART adapter is properly connected to PMOD A.
-* Check that the FPGA has the latest gateware flashed.
-* Try resetting the FPGA (RST button) and restarting the Rust application.
-* Verify that both TX and RX lines are correctly connected and working.
-* Check if there are any errors reported in the terminal by the Rust application.
-</details>
 
 ### udev rules (Linux)
 

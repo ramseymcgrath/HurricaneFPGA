@@ -204,8 +204,8 @@ class HurricaneFPGATop(Elaboratable):
             # Map analyzer status outputs to LEDs
             m.d.comb += [
                 leds.led_outputs[0].eq(
-                    analyzer.o_uart_rx_activity
-                ),  # LED 0: UART RX activity
+                    analyzer.o_command_rx_activity
+                ),  # LED 0: Command activity (CONTROL port or UART)
                 leds.led_outputs[1].eq(
                     analyzer.o_host_packet_activity
                 ),  # LED 1: Host (AUX) activity
@@ -214,9 +214,11 @@ class HurricaneFPGATop(Elaboratable):
                 ),  # LED 2: Device (TARGET) activity
                 leds.led_outputs[3].eq(
                     analyzer.o_uart_tx_activity
-                ),  # LED 3: UART TX activity
+                ),  # LED 3: Debug output activity
                 # LED 4 is set above based on cmd_parser availability
-                leds.led_outputs[5].eq(0),  # LED 5: Unused
+                leds.led_outputs[5].eq(
+                    analyzer.o_uart_rx_activity
+                ),  # LED 5: UART RX activity (when not using for commands)
             ]
 
             # Add connection for the final UART output stream -
@@ -232,9 +234,48 @@ if __name__ == "__main__":
     platform = get_appropriate_platform()
     print(f"Using located platform instance: {platform.name}")
 
+    # Add command line argument for verbose mode
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Build and flash Hurricane FPGA gateware"
+    )
+    parser.add_argument(
+        "--verbose", "-v", action="store_true", help="Enable verbose output"
+    )
+    parser.add_argument(
+        "--program",
+        "-p",
+        action="store_true",
+        help="Force programming even if BUILD_LOCAL is set",
+    )
+    parser.add_argument(
+        "--dfu", "-d", action="store_true", help="Use DFU for programming (default)"
+    )
+    args = parser.parse_args()
+
+    # Determine if we should program the device
+    should_program = not os.getenv("BUILD_LOCAL") or args.program
+
+    if should_program:
+        print("PROGRAMMING ENABLED: Device will be flashed after build")
+    else:
+        print("PROGRAMMING DISABLED: Only building bitstream")
+
+    # Set up any verbose options
+    verbose_options = {}
+    if args.verbose:
+        verbose_options["verbose_bitstream"] = True
+        verbose_options["verbose_toolchain"] = True
+        verbose_options["verbose_device"] = True
+        print("Verbose mode enabled - you'll see detailed output from the toolchain")
+
     top_design = HurricaneFPGATop()
+
+    # Pass verbose options to the top_level_cli
     top_level_cli(
         top_design,
         platform=platform,
-        do_program=False if os.getenv("BUILD_LOCAL") else True,
+        do_program=should_program,
+        **verbose_options,
     )

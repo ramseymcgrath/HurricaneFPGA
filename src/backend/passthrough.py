@@ -12,13 +12,13 @@ from .mouse_injector import SimpleMouseInjector, MouseCommandParser
 from .fifo import HyperRAMPacketFIFO
 from .utils import AsyncSerialRX, AsyncSerialTX
 from .uart import UARTTXHandler
+from .usb_serial import USBSerialDevice
 
 # Import the interfaces from the shared module
 from .interfaces import (
     StreamInterface,
     USBInStreamInterface,
     USBOutStreamInterface,
-    USBPacketID,
 )
 
 __all__ = [
@@ -92,8 +92,9 @@ class PHYTranslatorHandler(Elaboratable):
         self.platform = platform
 
         # Outputs - UTMI translators
-        self.host_translator = None
-        self.dev_translator = None
+        self.host_translator = None  # AUX port
+        self.dev_translator = None  # TARGET port
+        self.control_translator = None  # CONTROL port for commands
 
         # Status
         self.simulation_mode = platform is None
@@ -115,6 +116,8 @@ class PHYTranslatorHandler(Elaboratable):
             aux_ulpi_res = Record([("i", ulpi_bus_layout), ("o", ulpi_bus_layout)])
             # Device is now TARGET
             target_ulpi_res = Record([("i", ulpi_bus_layout), ("o", ulpi_bus_layout)])
+            # Control for command interface
+            control_ulpi_res = Record([("i", ulpi_bus_layout), ("o", ulpi_bus_layout)])
 
             # Instantiate translators with dummy resources
             m.submodules.host_translator = self.host_translator = DomainRenamer("sync")(
@@ -123,6 +126,9 @@ class PHYTranslatorHandler(Elaboratable):
             m.submodules.dev_translator = self.dev_translator = DomainRenamer("sync")(
                 UTMITranslator(ulpi=target_ulpi_res)
             )
+            m.submodules.control_translator = self.control_translator = DomainRenamer(
+                "sync"
+            )(UTMITranslator(ulpi=control_ulpi_res))
 
             # Dummy VBUS enable signals
             control_vbus_en = Record([("o", 1)])
@@ -133,6 +139,21 @@ class PHYTranslatorHandler(Elaboratable):
             aux_ulpi_res = platform.request("aux_phy", 0)
             # Device connection uses TARGET port
             target_ulpi_res = platform.request("target_phy", 0)
+            # Control port for command interface
+            try:
+                control_ulpi_res = platform.request("control_phy", 0)
+                m.submodules.control_translator = self.control_translator = (
+                    DomainRenamer("sync")(UTMITranslator(ulpi=control_ulpi_res))
+                )
+                print(
+                    "USBPassthrough: Found CONTROL PHY resource. Command interface will use this."
+                )
+            except ResourceError:
+                print(
+                    "USBPassthrough: CONTROL PHY resource not found. Command interface will fall back to UART."
+                )
+                self.control_translator = None
+
             # VBUS input enable signals (Active High)
             control_vbus_en = platform.request("control_vbus_in_en", 0)
             aux_vbus_en = platform.request("aux_vbus_in_en", 0)
@@ -183,6 +204,9 @@ class USBDataPassthroughHandler(Elaboratable):
         self.o_dev_packet_activity = Signal()  # Activity on TARGET port (to/from mouse)
         self.o_uart_rx_activity = Signal()  # Activity on UART RX
         self.o_uart_tx_activity = Signal()  # Activity on UART TX
+        self.o_command_rx_activity = (
+            Signal()
+        )  # Activity on command interface (UART or CONTROL)
 
         # Stream interface for sending data out via UART TX
         self.i_uart_tx_stream = StreamInterface(payload_width=8)
@@ -195,6 +219,9 @@ class USBDataPassthroughHandler(Elaboratable):
 
         # Internal references to submodules (populated during elaborate)
         self._cmd_parser = None
+        self.use_control_port = (
+            False  # Will be set during elaborate if CONTROL PHY is available
+        )
 
     def get_cmd_parser(self):
         """Returns the command parser submodule instance."""
@@ -560,6 +587,10 @@ class USBDataPassthroughHandler(Elaboratable):
             dev_rx_stream_raw.payload.eq(dev_rx_fifo.r_data),
         ]
 
+        # --- Check if Control PHY is available for commands ---
+        control_translator = phy_handler.control_translator
+        self.use_control_port = control_translator is not None
+
         # --- UART Setup (Hardware Interface) ---
         uart_divisor = int(clk_freq // self.uart_baud_rate)
 
@@ -609,29 +640,80 @@ class USBDataPassthroughHandler(Elaboratable):
         # Create a UART TX handler to manage outgoing debug messages
         m.submodules.uart_tx_handler = uart_tx_handler = UARTTXHandler(fifo_depth=32)
 
-        # --- UART Data Flow ---
-        # Connect Hardware UART RX output stream directly to Parser input stream
-        m.d.comb += [
-            cmd_parser.i_uart_stream.valid.eq(
-                uart_rx.rdy
-            ),  # Valid byte received from HW UART
-            cmd_parser.i_uart_stream.payload.eq(uart_rx.data),  # The byte itself
-            uart_rx.ack.eq(
-                cmd_parser.i_uart_stream.ready
-            ),  # Acknowledge HW RX if parser FIFO can take it
-        ]
+        # --- CONTROL Port USB CDC-ACM Serial Implementation ---
+        if self.use_control_port:
+            try:
+                # Get raw USB bus directly from control PHY resource
+                control_bus = control_translator.ulpi
 
-        # Connect UART TX handler to hardware UART TX
-        m.d.comb += [
-            uart_tx.data.eq(uart_tx_handler.o_uart_data),  # Data from TX handler
-            uart_tx.ack.eq(
-                uart_tx_handler.o_uart_valid
-            ),  # Valid signal from TX handler
-            uart_tx_handler.i_uart_ready.eq(uart_tx.rdy),  # Ready signal to TX handler
-        ]
+                # Create the USB CDC-ACM serial device
+                m.submodules.usb_serial = usb_serial = USBSerialDevice(
+                    bus=control_bus,
+                    idVendor=0x1209,  # pid.codes open source VID
+                    idProduct=0x5BFA,  # Unique PID for Hurricane FPGA
+                    manufacturer_string="Hurricane FPGA",
+                    product_string="USB Command Interface",
+                    serial_number="HFPGA-001",
+                    max_packet_size=64,
+                )
 
-        # Connect the external UART TX stream interface to our handler
-        m.d.comb += self.i_uart_tx_stream.stream_eq(uart_tx_handler.i_tx_stream)
+                # Enable the USB device
+                m.d.comb += usb_serial.connect.eq(1)
+
+                # Connect serial RX to command parser
+                m.d.comb += [
+                    # Connect USB serial RX to command parser
+                    cmd_parser.i_uart_stream.valid.eq(usb_serial.rx.valid),
+                    cmd_parser.i_uart_stream.payload.eq(usb_serial.rx.payload),
+                    usb_serial.rx.ready.eq(cmd_parser.i_uart_stream.ready),
+                    # Command activity LED
+                    self.o_command_rx_activity.eq(usb_serial.rx.valid),
+                ]
+
+                # Connect debug output to USB serial TX
+                m.d.comb += [
+                    usb_serial.tx.valid.eq(self.i_uart_tx_stream.valid),
+                    usb_serial.tx.payload.eq(self.i_uart_tx_stream.payload),
+                    usb_serial.tx.first.eq(self.i_uart_tx_stream.first),
+                    usb_serial.tx.last.eq(self.i_uart_tx_stream.last),
+                    self.i_uart_tx_stream.ready.eq(usb_serial.tx.ready),
+                ]
+
+                # Activity indicator for debug output
+                m.d.comb += self.o_uart_tx_activity.eq(usb_serial.tx.valid)
+
+                # UART is still available for legacy/debug purposes
+                m.d.comb += uart_rx.ack.eq(uart_rx.rdy)  # Just acknowledge UART data
+                m.d.comb += self.o_uart_rx_activity.eq(uart_rx.rdy)
+
+                print(
+                    "USBPassthrough: CDC-ACM serial interface successfully configured for CONTROL port."
+                )
+
+            except Exception as e:
+                print(f"WARNING: USB Serial setup error: {e}. Falling back to UART.")
+                # Use UART as fallback
+                self.use_control_port = False
+
+        # --- Fallback to UART if CONTROL port is not available or setup failed ---
+        if not self.use_control_port:
+            # Connect Hardware UART for command input/output
+            m.d.comb += [
+                # Connect Hardware UART RX to Parser input stream
+                cmd_parser.i_uart_stream.valid.eq(uart_rx.rdy),
+                cmd_parser.i_uart_stream.payload.eq(uart_rx.data),
+                uart_rx.ack.eq(cmd_parser.i_uart_stream.ready),
+                # Connect UART TX handler to hardware UART TX
+                uart_tx.data.eq(uart_tx_handler.o_uart_data),
+                uart_tx.ack.eq(uart_tx_handler.o_uart_valid),
+                uart_tx_handler.i_uart_ready.eq(uart_tx.rdy),
+                # Connect the external UART TX stream interface to our handler
+                self.i_uart_tx_stream.stream_eq(uart_tx_handler.i_tx_stream),
+                # Set activity LEDs for UART mode
+                self.o_command_rx_activity.eq(uart_rx.rdy),
+                self.o_uart_rx_activity.eq(uart_rx.rdy),
+                self.o_uart_tx_activity.eq(uart_tx_handler.o_uart_valid),
+            ]
 
         # --- Data Path Logic (USB domain) ---
         m.submodules.injector = injector = SimpleMouseInjector()
