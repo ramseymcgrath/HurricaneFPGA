@@ -234,48 +234,19 @@ if __name__ == "__main__":
     platform = get_appropriate_platform()
     print(f"Using located platform instance: {platform.name}")
 
-    # Add command line argument for verbose mode
-    import argparse
-
-    parser = argparse.ArgumentParser(
-        description="Build and flash Hurricane FPGA gateware"
-    )
-    parser.add_argument(
-        "--verbose", "-v", action="store_true", help="Enable verbose output"
-    )
-    parser.add_argument(
-        "--program",
-        "-p",
-        action="store_true",
-        help="Force programming even if BUILD_LOCAL is set",
-    )
-    parser.add_argument(
-        "--dfu", "-d", action="store_true", help="Use DFU for programming (default)"
-    )
-    args = parser.parse_args()
-
-    # Determine if we should program the device
-    should_program = not os.getenv("BUILD_LOCAL") or args.program
+    # Check if we should program the device
+    should_program = not os.getenv("BUILD_LOCAL")
 
     if should_program:
         print("PROGRAMMING ENABLED: Device will be flashed after build")
     else:
         print("PROGRAMMING DISABLED: Only building bitstream")
 
-    # Set up any verbose options
-    verbose_options = {}
-    if args.verbose:
-        verbose_options["verbose_bitstream"] = True
-        verbose_options["verbose_toolchain"] = True
-        verbose_options["verbose_device"] = True
-        print("Verbose mode enabled - you'll see detailed output from the toolchain")
-
     top_design = HurricaneFPGATop()
 
-    # Pass verbose options to the top_level_cli
+    # Use LUNA's top_level_cli which handles its own arguments
     top_level_cli(
         top_design,
         platform=platform,
         do_program=should_program,
-        **verbose_options,
     )
