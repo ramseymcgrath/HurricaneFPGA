@@ -204,7 +204,7 @@ def program_via_dfu(bitstream_file=None, verbose=False):
         # Try to find DFU devices
         device = ApolloDebugger(force_offline=True)
 
-        if not dfu.device:
+        if not device:
             print("\n⚠️ No DFU device found. Please put your device in DFU mode:")
             print("   1. Connect the FPGA board via USB")
             print("   2. Press and hold the DFU button (typically RESET)")
