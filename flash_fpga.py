@@ -224,6 +224,7 @@ def program_via_dfu(bitstream_file=None, verbose=False):
 
         # Start programming with timing
         print("\n⏳ Programming device (this may take 30-60 seconds)...")
+        device.force_fpga_offline()
         start_time = time.time()
         with device.jtag as jtag:
             # Program the bitstream
