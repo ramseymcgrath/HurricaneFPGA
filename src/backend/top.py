@@ -105,9 +105,12 @@ class HurricaneFPGATop(Elaboratable):
             ]
 
             # --- Instantiate Core Modules ---
+            # Instantiate core passthrough with correct baud rate
             m.submodules.analyzer = analyzer = USBDataPassthroughHandler(
                 uart_baud_rate=self.BAUD_RATE
             )
+            # Note: The port assignments (PC on port C, Mouse on port A) are handled
+            # internally in the passthrough.py file via the PHYTranslatorHandler class
 
             # LEDs - Cynthion r1.4 has 6 LEDs (0-5)
             m.submodules.leds = leds = LEDController(platform, num_leds=6)
@@ -118,7 +121,7 @@ class HurricaneFPGATop(Elaboratable):
             # Handle cmd_parser (which might be None)
             cmd_parser = analyzer.get_cmd_parser()
 
-            # If cmd_parser is available, use it; otherwise skip this functionality
+            # Update LED mappings to reflect corrected ports
             if cmd_parser is not None:
                 cmd_valid = Signal()
                 cmd_error = Signal()
@@ -165,7 +168,7 @@ class HurricaneFPGATop(Elaboratable):
                         ]
                         m.next = "IDLE"
 
-                # Connect acknowledgment system to UART TX but without ready signal
+                # Connect acknowledgment system to UART TX
                 m.d.comb += [
                     command_ack.i_uart_stream.valid.eq(analyzer.i_uart_tx_stream.valid),
                     command_ack.i_uart_stream.payload.eq(
@@ -173,12 +176,14 @@ class HurricaneFPGATop(Elaboratable):
                     ),
                     command_ack.i_uart_stream.first.eq(analyzer.i_uart_tx_stream.first),
                     command_ack.i_uart_stream.last.eq(analyzer.i_uart_tx_stream.last),
-                    # Removing the ready signal connection to avoid driver conflicts
-                    # analyzer.i_uart_tx_stream.ready.eq(command_ack.i_uart_stream.ready)
+                    analyzer.i_uart_tx_stream.ready.eq(command_ack.i_uart_stream.ready),
                 ]
 
-                # Map LED 4 to handshake status if available
+                # Map LED 4 to handshake status (command channel)
                 m.d.comb += leds.led_outputs[4].eq(cmd_parser.o_handshake_complete)
+
+                # Add LED 5 for UART command port status
+                m.d.comb += leds.led_outputs[5].eq(analyzer.o_uart_rx_activity)
             else:
                 # Skip command parser functionality if not available
                 print(
@@ -201,24 +206,22 @@ class HurricaneFPGATop(Elaboratable):
                 m.d.comb += leds.led_outputs[4].eq(0)  # LED 4: Off when no handshake
 
             # --- Connect LEDs ---
-            # Map analyzer status outputs to LEDs
+            # Update LED mappings for corrected port assignments
             m.d.comb += [
                 leds.led_outputs[0].eq(
                     analyzer.o_command_rx_activity
-                ),  # LED 0: Command activity (CONTROL port or UART)
+                ),  # LED 0: UART command activity
                 leds.led_outputs[1].eq(
                     analyzer.o_host_packet_activity
-                ),  # LED 1: Host (AUX) activity
+                ),  # LED 1: Host (Port C - PC) activity
                 leds.led_outputs[2].eq(
                     analyzer.o_dev_packet_activity
-                ),  # LED 2: Device (TARGET) activity
+                ),  # LED 2: Device (Port A - Mouse) activity
                 leds.led_outputs[3].eq(
                     analyzer.o_uart_tx_activity
                 ),  # LED 3: Debug output activity
-                # LED 4 is set above based on cmd_parser availability
-                leds.led_outputs[5].eq(
-                    analyzer.o_uart_rx_activity
-                ),  # LED 5: UART RX activity (when not using for commands)
+                # LED 4: Command handshake status (set above)
+                # LED 5: UART RX activity (set above)
             ]
 
             # Add connection for the final UART output stream -
@@ -234,48 +237,19 @@ if __name__ == "__main__":
     platform = get_appropriate_platform()
     print(f"Using located platform instance: {platform.name}")
 
-    # Add command line argument for verbose mode
-    import argparse
-
-    parser = argparse.ArgumentParser(
-        description="Build and flash Hurricane FPGA gateware"
-    )
-    parser.add_argument(
-        "--verbose", "-v", action="store_true", help="Enable verbose output"
-    )
-    parser.add_argument(
-        "--program",
-        "-p",
-        action="store_true",
-        help="Force programming even if BUILD_LOCAL is set",
-    )
-    parser.add_argument(
-        "--dfu", "-d", action="store_true", help="Use DFU for programming (default)"
-    )
-    args = parser.parse_args()
-
-    # Determine if we should program the device
-    should_program = not os.getenv("BUILD_LOCAL") or args.program
+    # Check if we should program the device
+    should_program = not os.getenv("BUILD_LOCAL")
 
     if should_program:
         print("PROGRAMMING ENABLED: Device will be flashed after build")
     else:
         print("PROGRAMMING DISABLED: Only building bitstream")
 
-    # Set up any verbose options
-    verbose_options = {}
-    if args.verbose:
-        verbose_options["verbose_bitstream"] = True
-        verbose_options["verbose_toolchain"] = True
-        verbose_options["verbose_device"] = True
-        print("Verbose mode enabled - you'll see detailed output from the toolchain")
-
     top_design = HurricaneFPGATop()
 
-    # Pass verbose options to the top_level_cli
+    # Use LUNA's top_level_cli which handles its own arguments
     top_level_cli(
         top_design,
         platform=platform,
         do_program=should_program,
-        **verbose_options,
     )

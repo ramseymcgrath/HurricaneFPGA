@@ -2,7 +2,7 @@
 
 # -*- coding: utf-8 -*-
 
-from amaranth import Elaboratable, Module, Signal, DomainRenamer, Cat, C, Record
+from amaranth import Elaboratable, Module, Signal, DomainRenamer, Cat, C, Record, Array
 from amaranth.build.res import ResourceError
 from amaranth.lib.fifo import SyncFIFOBuffered, AsyncFIFOBuffered
 from luna.gateware.interface.ulpi import UTMITranslator
@@ -92,8 +92,8 @@ class PHYTranslatorHandler(Elaboratable):
         self.platform = platform
 
         # Outputs - UTMI translators
-        self.host_translator = None  # AUX port
-        self.dev_translator = None  # TARGET port
+        self.host_translator = None  # AUX port (PC connection)
+        self.dev_translator = None  # TARGET port (Mouse connection)
         self.control_translator = None  # CONTROL port for commands
 
         # Status
@@ -112,19 +112,22 @@ class PHYTranslatorHandler(Elaboratable):
                 ("stp", 1),
                 ("rst", 1),
             ]
-            # Host is now AUX
-            aux_ulpi_res = Record([("i", ulpi_bus_layout), ("o", ulpi_bus_layout)])
-            # Device is now TARGET
-            target_ulpi_res = Record([("i", ulpi_bus_layout), ("o", ulpi_bus_layout)])
+            # Simulation port mappings
+            target_ulpi_res = Record(
+                [("i", ulpi_bus_layout), ("o", ulpi_bus_layout)]
+            )  # TARGET port (Mouse)
+            aux_ulpi_res = Record(
+                [("i", ulpi_bus_layout), ("o", ulpi_bus_layout)]
+            )  # AUX port (PC)
             # Control for command interface
             control_ulpi_res = Record([("i", ulpi_bus_layout), ("o", ulpi_bus_layout)])
 
             # Instantiate translators with dummy resources
             m.submodules.host_translator = self.host_translator = DomainRenamer("sync")(
-                UTMITranslator(ulpi=aux_ulpi_res)
+                UTMITranslator(ulpi=aux_ulpi_res)  # AUX port (PC connection)
             )
             m.submodules.dev_translator = self.dev_translator = DomainRenamer("sync")(
-                UTMITranslator(ulpi=target_ulpi_res)
+                UTMITranslator(ulpi=target_ulpi_res)  # TARGET port (Mouse connection)
             )
             m.submodules.control_translator = self.control_translator = DomainRenamer(
                 "sync"
@@ -134,59 +137,197 @@ class PHYTranslatorHandler(Elaboratable):
             control_vbus_en = Record([("o", 1)])
             aux_vbus_en = Record([("o", 1)])
         else:
-            # Request actual PHY resources
-            # Host connection uses AUX port
-            aux_ulpi_res = platform.request("aux_phy", 0)
-            # Device connection uses TARGET port
-            target_ulpi_res = platform.request("target_phy", 0)
-            # Control port for command interface
+            # Request actual PHY resources based on platform version
             try:
-                control_ulpi_res = platform.request("control_phy", 0)
-                m.submodules.control_translator = self.control_translator = (
-                    DomainRenamer("sync")(UTMITranslator(ulpi=control_ulpi_res))
+                # Determine the correct PHY names based on platform version
+                print("DEBUG: Checking platform version")
+                if hasattr(platform, "version"):
+                    print(f"DEBUG: Platform version detected: {platform.version}")
+                else:
+                    print("DEBUG: Platform has no version attribute")
+
+                aux_phy_name = (
+                    "aux_phy"
+                    if hasattr(platform, "version") and platform.version >= (0, 6)
+                    else "host_phy"
                 )
+                control_phy_name = (
+                    "control_phy"
+                    if hasattr(platform, "version") and platform.version >= (0, 6)
+                    else "sideband_phy"
+                )
+                target_phy_name = "target_phy"  # Always the same
+
                 print(
-                    "USBPassthrough: Found CONTROL PHY resource. Command interface will use this."
+                    f"DEBUG: Using PHY names: aux={aux_phy_name}, target={target_phy_name}, control={control_phy_name}"
                 )
-            except ResourceError:
-                print(
-                    "USBPassthrough: CONTROL PHY resource not found. Command interface will fall back to UART."
-                )
-                self.control_translator = None
 
-            # VBUS input enable signals (Active High)
-            control_vbus_en = platform.request("control_vbus_in_en", 0)
-            aux_vbus_en = platform.request("aux_vbus_in_en", 0)
+                # Get a list of available resources for debugging
+                print("DEBUG: Available resources:")
+                try:
+                    available_resources = []
+                    for resource_name in platform.resources:
+                        available_resources.append(resource_name)
+                    print(f"DEBUG: {available_resources}")
+                except Exception as e:
+                    print(f"DEBUG: Error getting resource list: {e}")
 
-            # Instantiate translators with actual resources
-            # Host translator connects to AUX PHY
-            m.submodules.host_translator = self.host_translator = DomainRenamer("sync")(
-                UTMITranslator(ulpi=aux_ulpi_res)
-            )
-            # Device translator connects to TARGET PHY
-            m.submodules.dev_translator = self.dev_translator = DomainRenamer("sync")(
-                UTMITranslator(ulpi=target_ulpi_res)
-            )
+                # Try both aux/host and target PHYs, with fallbacks
+                try:
+                    print(f"DEBUG: Requesting {aux_phy_name}")
+                    aux_ulpi_res = platform.request(aux_phy_name, 0)
+                    print(f"DEBUG: Successfully got {aux_phy_name}")
 
-            # Enable VBUS input from both CONTROL and AUX ports (Active HIGH enable)
-            m.d.comb += [
-                control_vbus_en.o.eq(1),  # Enable Control VBUS input
-                aux_vbus_en.o.eq(1),  # Enable Aux VBUS input
-            ]
+                    print(f"DEBUG: Creating host_translator for {aux_phy_name}")
+                    m.submodules.host_translator = self.host_translator = DomainRenamer(
+                        "sync"
+                    )(
+                        UTMITranslator(ulpi=aux_ulpi_res)
+                    )  # PC connection
+                except ResourceError as e:
+                    print(f"DEBUG: Error requesting {aux_phy_name}: {e}")
+                    # Try alternate name if primary failed
+                    alt_aux_name = (
+                        "host_phy" if aux_phy_name == "aux_phy" else "aux_phy"
+                    )
+                    try:
+                        print(f"DEBUG: Trying alternate name {alt_aux_name}")
+                        aux_ulpi_res = platform.request(alt_aux_name, 0)
+                        print(f"DEBUG: Successfully got {alt_aux_name}")
+
+                        print(f"DEBUG: Creating host_translator for {alt_aux_name}")
+                        m.submodules.host_translator = (
+                            self.host_translator
+                        ) = DomainRenamer("sync")(
+                            UTMITranslator(ulpi=aux_ulpi_res)
+                        )  # PC connection
+                    except ResourceError as e2:
+                        print(
+                            f"DEBUG: Error requesting alternate name {alt_aux_name}: {e2}"
+                        )
+                        print(
+                            "DEBUG: AUX/HOST PHY unavailable - using dummy translator"
+                        )
+                        self.host_translator = None
+
+                try:
+                    print(f"DEBUG: Requesting {target_phy_name}")
+                    target_ulpi_res = platform.request(target_phy_name, 0)
+                    print(f"DEBUG: Successfully got {target_phy_name}")
+
+                    print(f"DEBUG: Creating dev_translator for {target_phy_name}")
+                    m.submodules.dev_translator = self.dev_translator = DomainRenamer(
+                        "sync"
+                    )(
+                        UTMITranslator(ulpi=target_ulpi_res)
+                    )  # Mouse connection
+                except ResourceError as e:
+                    print(f"DEBUG: Error requesting {target_phy_name}: {e}")
+                    print("DEBUG: TARGET PHY unavailable - using dummy translator")
+                    self.dev_translator = None
+
+                # Try to request Control PHY if available
+                try:
+                    control_ulpi_res = platform.request(control_phy_name, 0)
+                    m.submodules.control_translator = self.control_translator = (
+                        DomainRenamer("sync")(UTMITranslator(ulpi=control_ulpi_res))
+                    )
+                    print(
+                        f"USBPassthrough: Found {control_phy_name} resource. Command interface will use this."
+                    )
+                except ResourceError:
+                    self.control_translator = None
+                    print(
+                        f"USBPassthrough: {control_phy_name} resource not found. Command interface will use UART."
+                    )
+
+                # VBUS input enable signals (Active High)
+                try:
+                    aux_vbus_name = (
+                        "aux_vbus_in_en"
+                        if hasattr(platform, "version") and platform.version >= (0, 6)
+                        else "host_vbus_in_en"
+                    )
+                    control_vbus_name = (
+                        "control_vbus_in_en"
+                        if hasattr(platform, "version") and platform.version >= (0, 6)
+                        else "sideband_vbus_in_en"
+                    )
+                    target_vbus_name = (
+                        "target_c_vbus_en"
+                        if hasattr(platform, "version") and platform.version >= (0, 6)
+                        else "target_vbus_in_en"
+                    )
+
+                    try:
+                        control_vbus_en = platform.request(control_vbus_name, 0)
+                        m.d.comb += control_vbus_en.o.eq(1)  # Enable Control VBUS input
+                        print(f"USBPassthrough: Enabled {control_vbus_name}.")
+                    except ResourceError:
+                        print(f"USBPassthrough: {control_vbus_name} enable not found.")
+
+                    try:
+                        aux_vbus_en = platform.request(aux_vbus_name, 0)
+                        m.d.comb += aux_vbus_en.o.eq(1)  # Enable Aux VBUS input
+                        print(f"USBPassthrough: Enabled {aux_vbus_name}.")
+                    except ResourceError:
+                        print(f"USBPassthrough: {aux_vbus_name} enable not found.")
+
+                    try:
+                        # For Target Port A, make sure we enable VBUS passthrough from Target-C
+                        target_vbus_en = platform.request(target_vbus_name, 0)
+                        m.d.comb += target_vbus_en.o.eq(1)  # Enable Target VBUS input
+                        print(
+                            f"USBPassthrough: Enabled {target_vbus_name} for Target Port A."
+                        )
+
+                        # Enable Target A discharge control (set to 0 to disable discharge)
+                        try:
+                            target_discharge = platform.request("target_a_discharge", 0)
+                            m.d.comb += target_discharge.o.eq(
+                                0
+                            )  # Disable discharge to allow power
+                            print("USBPassthrough: Disabled Target A discharge.")
+                        except ResourceError:
+                            print(
+                                "USBPassthrough: target_a_discharge control not found."
+                            )
+                    except ResourceError:
+                        print(f"USBPassthrough: {target_vbus_name} enable not found.")
+                        print("WARNING: Target Port A may not receive power correctly!")
+
+                except Exception as e:
+                    print(f"USBPassthrough: Error configuring VBUS: {e}")
+
+                # After all resource setup, check and report translator status
+                if self.host_translator is not None:
+                    print("DEBUG: host_translator successfully initialized")
+                else:
+                    print("DEBUG: host_translator is None")
+
+                if self.dev_translator is not None:
+                    print("DEBUG: dev_translator successfully initialized")
+                else:
+                    print("DEBUG: dev_translator is None")
+
+            except Exception as e:
+                print(f"DEBUG: Unexpected error in PHY setup: {e}")
+                # Both translators will be None, triggering dummy mode in parent module
 
         # Configure both PHYs with standard settings
-        m.d.comb += [
-            self.host_translator.op_mode.eq(0b00),
-            self.host_translator.xcvr_select.eq(0b10),  # HS mode
-            self.host_translator.term_select.eq(0),  # Disable termination
-            self.host_translator.suspend.eq(0),
-        ]
-        m.d.comb += [
-            self.dev_translator.op_mode.eq(0b00),
-            self.dev_translator.xcvr_select.eq(0b10),  # HS mode
-            self.dev_translator.term_select.eq(0),  # Disable termination
-            self.dev_translator.suspend.eq(0),
-        ]
+        if self.host_translator is not None and self.dev_translator is not None:
+            m.d.comb += [
+                self.host_translator.op_mode.eq(0b00),
+                self.host_translator.xcvr_select.eq(0b10),  # HS mode
+                self.host_translator.term_select.eq(0),  # Disable termination
+                self.host_translator.suspend.eq(0),
+            ]
+            m.d.comb += [
+                self.dev_translator.op_mode.eq(0b00),
+                self.dev_translator.xcvr_select.eq(0b10),  # HS mode
+                self.dev_translator.term_select.eq(0),  # Disable termination
+                self.dev_translator.suspend.eq(0),
+            ]
 
         return m
 
@@ -248,67 +389,66 @@ class USBDataPassthroughHandler(Elaboratable):
         # Check if translators are properly initialized
         if host_translator is None or dev_translator is None:
             print(
-                "WARNING: USB translators are not properly initialized. Running in limited functionality mode."
+                "WARNING: One or more USB translators are not initialized yet. Using fallback initialization..."
             )
-            # Create dummy translators with necessary signals to prevent NoneType errors
-            if host_translator is None:
-                # Create dummy signals that would normally come from the translator
-                dummy_host_rx_active = Signal()
-                dummy_host_rx_valid = Signal()
-                dummy_host_rx_data = Signal(8)
+            try:
+                # Try to extract the submodules directly from the PHYTranslatorHandler
+                for name, sub in phy_handler._submodules.items():
+                    if name == "host_translator" and host_translator is None:
+                        host_translator = sub
+                        print(
+                            "Retrieved host_translator directly from phy_handler submodules"
+                        )
+                    if name == "dev_translator" and dev_translator is None:
+                        dev_translator = sub
+                        print(
+                            "Retrieved dev_translator directly from phy_handler submodules"
+                        )
 
-                # Create a class-like object to replace the missing translator
-                class DummyHostTranslator:
-                    def __init__(self):
-                        self.rx_active = dummy_host_rx_active
-                        self.rx_valid = dummy_host_rx_valid
-                        self.rx_data = dummy_host_rx_data
-                        self.rx_ready = Signal()
-                        self.tx_ready = Signal()
-                        self.tx_valid = Signal()
-                        self.tx_data = Signal(8)
+                # Configure translators if they were successfully retrieved
+                if host_translator is not None:
+                    m.d.comb += [
+                        host_translator.op_mode.eq(0b00),
+                        host_translator.xcvr_select.eq(0b10),  # HS mode
+                        host_translator.term_select.eq(0),  # Disable termination
+                        host_translator.suspend.eq(0),
+                    ]
+                    print("Configured retrieved host_translator")
 
-                host_translator = DummyHostTranslator()
-
-            if dev_translator is None:
-                # Create dummy signals for device translator
-                dummy_dev_rx_active = Signal()
-                dummy_dev_rx_valid = Signal()
-                dummy_dev_rx_data = Signal(8)
-
-                # Create a class-like object to replace the missing translator
-                class DummyDevTranslator:
-                    def __init__(self):
-                        self.rx_active = dummy_dev_rx_active
-                        self.rx_valid = dummy_dev_rx_valid
-                        self.rx_data = dummy_dev_rx_data
-                        self.rx_ready = Signal()
-                        self.tx_ready = Signal()
-                        self.tx_valid = Signal()
-                        self.tx_data = Signal(8)
-
-                dev_translator = DummyDevTranslator()
+                if dev_translator is not None:
+                    m.d.comb += [
+                        dev_translator.op_mode.eq(0b00),
+                        dev_translator.xcvr_select.eq(0b10),  # HS mode
+                        dev_translator.term_select.eq(0),  # Disable termination
+                        dev_translator.suspend.eq(0),
+                    ]
+                    print("Configured retrieved dev_translator")
+            except Exception as e:
+                print(
+                    f"WARNING: Could not retrieve translators from PHYTranslatorHandler: {e}"
+                )
+            print("NOTE: Using dummy operations for any missing translators")
 
         # --- FIFOs ---
         cdc_fifo_width = 10  # 8 data + first + last
         cdc_fifo_depth = 32  # Depth for domain crossing FIFOs
 
         # RX path FIFOs (sync -> usb)
-        # Host data comes from AUX PHY
+        # Host (PC) data comes from AUX PHY
         m.submodules.host_rx_fifo = host_rx_fifo = AsyncFIFOBuffered(
             width=cdc_fifo_width, depth=cdc_fifo_depth, w_domain="sync", r_domain="usb"
         )
-        # Device data comes from TARGET PHY
+        # Device (Mouse) data comes from TARGET PHY
         m.submodules.dev_rx_fifo = dev_rx_fifo = AsyncFIFOBuffered(
             width=cdc_fifo_width, depth=cdc_fifo_depth, w_domain="sync", r_domain="usb"
         )
 
         # TX path CDC FIFOs (usb -> sync)
-        # Host data goes to AUX PHY
+        # Host data goes to AUX PHY (PC connection - Port C)
         m.submodules.host_tx_cdc = host_tx_cdc = AsyncFIFOBuffered(
             width=cdc_fifo_width, depth=cdc_fifo_depth, w_domain="usb", r_domain="sync"
         )
-        # Device data goes to TARGET PHY
+        # Device data goes to TARGET PHY (mouse connection - Port A)
         m.submodules.dev_tx_cdc = dev_tx_cdc = AsyncFIFOBuffered(
             width=cdc_fifo_width, depth=cdc_fifo_depth, w_domain="usb", r_domain="sync"
         )
@@ -367,12 +507,6 @@ class USBDataPassthroughHandler(Elaboratable):
             dev_hyperram_in_stream = StreamInterface(
                 payload_width=16
             )  # Input to device FIFO (to TARGET)
-
-            # Create a shared memory arbiter for the host and device FIFOs
-            # We need to modify our approach because both FIFOs can't drive
-            # the same PSRAM controller simultaneously
-
-            # Create individual FIFOs for buffering
             m.submodules.host_buffer_fifo = host_buffer_fifo = SyncFIFOBuffered(
                 width=16, depth=hyperram_out_buf_depth
             )
@@ -458,38 +592,49 @@ class USBDataPassthroughHandler(Elaboratable):
             ]
 
             # Output path logic - need to demux the shared output
-            # In this simplified approach, we'll send all HyperRAM output to both PHYs
             # This is not bandwidth-efficient but ensures no driver conflicts
 
-            # Host Path (To AUX PHY)
-            m.d.comb += [
-                host_translator.tx_data.eq(shared_hyperram_fifo.output.payload[0:8]),
-                host_translator.tx_valid.eq(shared_hyperram_fifo.output.valid),
-                # Ready signal is tricky - we need to AND both ready signals
-            ]
+            # Only proceed if both translators are initialized
+            if host_translator is not None and dev_translator is not None:
+                # Host Path (To AUX PHY - Port C)
+                m.d.comb += [
+                    host_translator.tx_data.eq(
+                        shared_hyperram_fifo.output.payload[0:8]
+                    ),
+                    host_translator.tx_valid.eq(shared_hyperram_fifo.output.valid),
+                ]
 
-            # Device Path (To TARGET PHY)
-            m.d.comb += [
-                dev_translator.tx_data.eq(shared_hyperram_fifo.output.payload[0:8]),
-                dev_translator.tx_valid.eq(shared_hyperram_fifo.output.valid),
-                # Connect ready signals from both PHYs
-            ]
+                # Device Path (To TARGET PHY - Port A)
+                m.d.comb += [
+                    dev_translator.tx_data.eq(shared_hyperram_fifo.output.payload[0:8]),
+                    dev_translator.tx_valid.eq(shared_hyperram_fifo.output.valid),
+                ]
 
-            # Only dequeue from the HyperRAM FIFO when both PHYs are ready
-            m.d.comb += [
-                shared_hyperram_fifo.output.ready.eq(
-                    host_translator.tx_ready & dev_translator.tx_ready
-                ),
-            ]
+                # Only dequeue from the HyperRAM FIFO when both PHYs are ready
+                m.d.comb += [
+                    shared_hyperram_fifo.output.ready.eq(
+                        host_translator.tx_ready & dev_translator.tx_ready
+                    ),
+                ]
+            else:
+                # Fallback when translators aren't available
+                print(
+                    "WARNING: HyperRAM path cannot be connected because translators aren't initialized"
+                )
+                m.d.comb += [
+                    shared_hyperram_fifo.output.ready.eq(
+                        0
+                    ),  # Never ready to receive data
+                ]
 
         else:
             # --- Non-HyperRAM Fallback Path (CDC -> Sync Buffer -> PHY TX) ---
             sync_buffer_depth = 64  # Fallback BRAM depth
-            # Host path buffer (to/from AUX)
+            # Host path buffer (to/from TARGET)
             m.submodules.host_sync_buffer = host_sync_buffer = SyncFIFOBuffered(
                 width=8, depth=sync_buffer_depth
             )
-            # Device path buffer (to/from TARGET)
+            # Device path buffer (to/from AUX)
             m.submodules.dev_sync_buffer = dev_sync_buffer = SyncFIFOBuffered(
                 width=8, depth=sync_buffer_depth
             )
@@ -522,51 +667,66 @@ class USBDataPassthroughHandler(Elaboratable):
             ]
 
         # --- Host RX Path (AUX PHY -> CDC -> USB Domain Logic) ---
-        host_rx_first = Signal()
-        host_rx_last = Signal()
-        host_prev_rx_active = Signal(reset_less=True)
-        m.d.sync += host_prev_rx_active.eq(host_translator.rx_active)
-        m.d.comb += host_rx_first.eq(
-            host_translator.rx_valid
-            & (host_translator.rx_active & ~host_prev_rx_active)
-        )
-        host_rx_last_comb = Signal()
-        m.d.comb += host_rx_last_comb.eq(
-            ~host_translator.rx_active & host_prev_rx_active
-        )
-        m.d.sync += host_rx_last.eq(
-            host_rx_last_comb & host_translator.rx_valid
-        )  # Align with valid data
+        if host_translator is not None:
+            host_rx_first = Signal()
+            host_rx_last = Signal()
+            host_prev_rx_active = Signal(reset_less=True)
+            m.d.sync += host_prev_rx_active.eq(host_translator.rx_active)
+            m.d.comb += host_rx_first.eq(
+                host_translator.rx_valid
+                & (host_translator.rx_active & ~host_prev_rx_active)
+            )
+            host_rx_last_comb = Signal()
+            m.d.comb += host_rx_last_comb.eq(
+                ~host_translator.rx_active & host_prev_rx_active
+            )
+            m.d.sync += host_rx_last.eq(
+                host_rx_last_comb & host_translator.rx_valid
+            )  # Align with valid data
 
-        m.d.comb += [
-            host_rx_fifo.w_en.eq(host_translator.rx_valid),
-            host_rx_fifo.w_data.eq(
-                Cat(host_translator.rx_data, host_rx_first, host_rx_last_comb)
-            ),
-            host_translator.rx_ready.eq(host_rx_fifo.w_rdy),  # Backpressure
-        ]
+            m.d.comb += [
+                host_rx_fifo.w_en.eq(host_translator.rx_valid),
+                host_rx_fifo.w_data.eq(
+                    Cat(host_translator.rx_data, host_rx_first, host_rx_last_comb)
+                ),
+            ]
+        else:
+            # If host_translator is None, make sure the FIFO isn't expecting data
+            m.d.comb += [
+                host_rx_fifo.w_en.eq(0),
+                host_rx_fifo.w_data.eq(0),
+            ]
 
         # --- Device RX Path (TARGET PHY -> CDC -> USB Domain Logic) ---
-        dev_rx_first = Signal()
-        dev_rx_last = Signal()
-        dev_prev_rx_active = Signal(reset_less=True)
-        m.d.sync += dev_prev_rx_active.eq(dev_translator.rx_active)
-        m.d.comb += dev_rx_first.eq(
-            dev_translator.rx_valid & (dev_translator.rx_active & ~dev_prev_rx_active)
-        )
-        dev_rx_last_comb = Signal()
-        m.d.comb += dev_rx_last_comb.eq(~dev_translator.rx_active & dev_prev_rx_active)
-        m.d.sync += dev_rx_last.eq(
-            dev_rx_last_comb & dev_translator.rx_valid
-        )  # Align with valid data
+        if dev_translator is not None:
+            dev_rx_first = Signal()
+            dev_rx_last = Signal()
+            dev_prev_rx_active = Signal(reset_less=True)
+            m.d.sync += dev_prev_rx_active.eq(dev_translator.rx_active)
+            m.d.comb += dev_rx_first.eq(
+                dev_translator.rx_valid
+                & (dev_translator.rx_active & ~dev_prev_rx_active)
+            )
+            dev_rx_last_comb = Signal()
+            m.d.comb += dev_rx_last_comb.eq(
+                ~dev_translator.rx_active & dev_prev_rx_active
+            )
+            m.d.sync += dev_rx_last.eq(
+                dev_rx_last_comb & dev_translator.rx_valid
+            )  # Align with valid data
 
-        m.d.comb += [
-            dev_rx_fifo.w_en.eq(dev_translator.rx_valid),
-            dev_rx_fifo.w_data.eq(
-                Cat(dev_translator.rx_data, dev_rx_first, dev_rx_last_comb)
-            ),
-            dev_translator.rx_ready.eq(dev_rx_fifo.w_rdy),  # Backpressure
-        ]
+            m.d.comb += [
+                dev_rx_fifo.w_en.eq(dev_translator.rx_valid),
+                dev_rx_fifo.w_data.eq(
+                    Cat(dev_translator.rx_data, dev_rx_first, dev_rx_last_comb)
+                ),
+            ]
+        else:
+            # If dev_translator is None, make sure the FIFO isn't expecting data
+            m.d.comb += [
+                dev_rx_fifo.w_en.eq(0),
+                dev_rx_fifo.w_data.eq(0),
+            ]
 
         # --- Stream Interfaces from RX FIFOs (Output in 'usb' domain) ---
         host_rx_stream_raw = StreamInterface(
@@ -748,9 +908,9 @@ class USBDataPassthroughHandler(Elaboratable):
         ]
 
         # Convert 10-bit streams to standard 8-bit payload streams
-        # Data stream coming FROM the host (PC via AUX PHY)
+        # Data stream coming FROM the host (PC via TARGET PHY)
         host_logic_in_stream = USBOutStreamInterface()  # Terminology: OUT of PC
-        # Data stream coming FROM the device (Mouse via TARGET PHY)
+        # Data stream coming FROM the device (Mouse via AUX PHY)
         dev_logic_in_stream = USBInStreamInterface()  # Terminology: IN to PC
 
         m.d.comb += [
@@ -774,7 +934,7 @@ class USBDataPassthroughHandler(Elaboratable):
             injector.dy.eq(self.i_dy),
         ]
 
-        # --- Host -> Device Path (AUX -> TARGET) ---
+        # --- Host -> Device Path (TARGET -> AUX) ---
         # Data from PC (host_logic_in_stream) goes directly to the device TX CDC fifo
         dev_tx_cdc_input_stream = StreamInterface(payload_width=8)
         m.d.comb += host_logic_in_stream.stream_eq(dev_tx_cdc_input_stream)
@@ -791,7 +951,7 @@ class USBDataPassthroughHandler(Elaboratable):
             dev_tx_cdc_input_stream.ready.eq(dev_tx_cdc.w_rdy),
         ]
 
-        # --- Device -> Host Path (TARGET -> AUX) ---
+        # --- Device -> Host Path (AUX -> TARGET) ---
         # Data from Mouse (dev_logic_in_stream) and Injector go into Arbiter
         m.d.comb += dev_logic_in_stream.stream_eq(arbiter.passthrough_in)
         m.d.comb += injector.source.stream_eq(arbiter.inject_in)
@@ -809,6 +969,95 @@ class USBDataPassthroughHandler(Elaboratable):
             ),
             arbiter_out_stream.ready.eq(host_tx_cdc.w_rdy),
         ]
+
+        # --- Packet Activity Indicators ---
+        # Add explicit activity indicators for USB packet detection
+        # These will be used to drive the activity LEDs
+        usb_host_activity = Signal(reset=0)
+        usb_dev_activity = Signal(reset=0)
+
+        # Create activity indicators for host (AUX/PC) traffic
+        if host_translator is not None:
+            # Set activity signal when valid data is received from host
+            with m.If(host_translator.rx_valid):
+                m.d.sync += usb_host_activity.eq(1)
+            with m.Else():
+                m.d.sync += usb_host_activity.eq(0)
+
+        # Create activity indicators for device (TARGET/Mouse) traffic
+        if dev_translator is not None:
+            # Set activity signal when valid data is received from device
+            with m.If(dev_translator.rx_valid):
+                m.d.sync += usb_dev_activity.eq(1)
+            with m.Else():
+                m.d.sync += usb_dev_activity.eq(0)
+
+        # Connect activity signals to output pins for LEDs
+        m.d.comb += [
+            self.o_host_packet_activity.eq(usb_host_activity),
+            self.o_dev_packet_activity.eq(usb_dev_activity),
+        ]
+
+        # Make sure UART TX activity is visible
+        # Use safe access pattern for usb_serial which might not be defined
+        if self.use_control_port:
+            # Only use this part when usb_serial is guaranteed to exist
+            m.d.comb += self.o_uart_tx_activity.eq(
+                uart_tx_handler.o_uart_valid | usb_serial.tx.valid
+            )
+        else:
+            # Fallback when only using UART
+            m.d.comb += self.o_uart_tx_activity.eq(uart_tx_handler.o_uart_valid)
+
+        # For debugging: send a test message on startup
+        startup_message = "Hurricane FPGA USB Proxy Initialized\r\n"
+        startup_msg_rom = Array([ord(c) for c in startup_message])
+
+        msg_counter = Signal(8, reset=0)
+        msg_sent = Signal(reset=0)
+
+        with m.If(~msg_sent):
+            # Basic message sender for startup
+            if self.use_control_port:
+                # If using CDC-ACM USB serial
+                with m.If(usb_serial.tx.ready):
+                    m.d.comb += [
+                        usb_serial.tx.valid.eq(1),
+                        usb_serial.tx.payload.eq(startup_msg_rom[msg_counter]),
+                        usb_serial.tx.first.eq(msg_counter == 0),
+                        usb_serial.tx.last.eq(msg_counter == len(startup_message) - 1),
+                    ]
+
+                    # Increment counter or mark as sent
+                    with m.If(msg_counter == len(startup_message) - 1):
+                        m.d.sync += [
+                            msg_counter.eq(0),
+                            msg_sent.eq(1),
+                        ]
+                    with m.Else():
+                        m.d.sync += msg_counter.eq(msg_counter + 1)
+            else:
+                # If using UART
+                with m.If(uart_tx_handler.i_tx_stream.ready):
+                    m.d.comb += [
+                        uart_tx_handler.i_tx_stream.valid.eq(1),
+                        uart_tx_handler.i_tx_stream.payload.eq(
+                            startup_msg_rom[msg_counter]
+                        ),
+                        uart_tx_handler.i_tx_stream.first.eq(msg_counter == 0),
+                        uart_tx_handler.i_tx_stream.last.eq(
+                            msg_counter == len(startup_message) - 1
+                        ),
+                    ]
+
+                    # Increment counter or mark as sent
+                    with m.If(msg_counter == len(startup_message) - 1):
+                        m.d.sync += [
+                            msg_counter.eq(0),
+                            msg_sent.eq(1),
+                        ]
+                    with m.Else():
+                        m.d.sync += msg_counter.eq(msg_counter + 1)
 
         return m
 

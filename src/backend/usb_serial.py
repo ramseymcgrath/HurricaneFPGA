@@ -52,8 +52,8 @@ class USBSerialDevice(Elaboratable):
         The maximum packet size for communications.
     """
 
-    _STATUS_ENDPOINT_NUMBER = 3
-    _DATA_ENDPOINT_NUMBER = 4
+    _STATUS_ENDPOINT_NUMBER = 5
+    _DATA_ENDPOINT_NUMBER = 6
 
     def __init__(
         self,
@@ -127,7 +127,7 @@ class USBSerialDevice(Elaboratable):
 
                 # CDC communications endpoint
                 with i.EndpointDescriptor() as e:
-                    e.bEndpointAddress = 0x80 | self._STATUS_ENDPOINT_NUMBER
+                    e.bEndpointAddress = 0x80 | self._STATUS_ENDPOINT_NUMBER  # EP5 IN
                     e.bmAttributes = 0x03
                     e.wMaxPacketSize = self._max_packet_size
                     e.bInterval = 11
@@ -142,12 +142,12 @@ class USBSerialDevice(Elaboratable):
 
                 # Data IN to host (tx, from our side)
                 with i.EndpointDescriptor() as e:
-                    e.bEndpointAddress = 0x80 | self._DATA_ENDPOINT_NUMBER
+                    e.bEndpointAddress = 0x80 | self._DATA_ENDPOINT_NUMBER  # EP6 IN
                     e.wMaxPacketSize = self._max_packet_size
 
                 # Data OUT from host (rx, from our side)
                 with i.EndpointDescriptor() as e:
-                    e.bEndpointAddress = self._DATA_ENDPOINT_NUMBER
+                    e.bEndpointAddress = self._DATA_ENDPOINT_NUMBER  # EP6 OUT
                     e.wMaxPacketSize = self._max_packet_size
 
         return descriptors
