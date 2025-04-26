@@ -4,7 +4,9 @@
 
 from amaranth import Elaboratable, Module, Signal
 from amaranth.lib.fifo import SyncFIFOBuffered
-from .interfaces import USBInStreamInterface, USBPacketID, StreamInterface
+
+# Use only the standard StreamInterface
+from .interfaces import StreamInterface, USBPacketID
 
 __all__ = ["SimpleMouseInjector", "MouseCommandParser"]
 
@@ -14,7 +16,8 @@ __all__ = ["SimpleMouseInjector", "MouseCommandParser"]
 
 class SimpleMouseInjector(Elaboratable):
     def __init__(self):
-        self.source = USBInStreamInterface(payload_width=8)
+        # Use the standard StreamInterface for the output
+        self.source = StreamInterface(payload_width=8)
         self.trigger = Signal()
         self.buttons = Signal(8)
         self.dx = Signal(8)
