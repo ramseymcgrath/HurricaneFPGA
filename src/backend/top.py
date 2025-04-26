@@ -14,13 +14,15 @@ from amaranth import (
     ResetSignal,
     Const,
     ClockSignal,
+    DomainRenamer,
     Signal,
 )
 from amaranth.build.res import ResourceError
 from luna import top_level_cli
 from luna.gateware.platform import get_appropriate_platform
+from luna.gateware.interface.ulpi import UTMITranslator  # Keep for Control Port
 
-from src.backend.passthrough import USBDataPassthroughHandler
+from src.backend.fifo import StreamFIFO  # Corrected import
 from src.backend.utils import LEDController
 from src.backend.uart import CommandAckSystem
 
@@ -105,129 +107,31 @@ class HurricaneFPGATop(Elaboratable):
             ]
 
             # --- Instantiate Core Modules ---
-            # Instantiate core passthrough with correct baud rate
-            m.submodules.analyzer = analyzer = USBDataPassthroughHandler(
-                uart_baud_rate=self.BAUD_RATE
+            # Request Target A PHY for USB HOST side (talking to real mouse)
+            target_a_ulpi_res = platform.request("target_a_phy", 0)
+
+            # Request Target C PHY for USB DEVICE side (talking to PC)
+            target_c_ulpi_res = platform.request("target_c_phy", 0)
+
+            # Set up Host Translator (for talking to real mouse)
+            m.submodules.host_translator = self.host_translator = DomainRenamer("sync")(
+                UTMITranslator(ulpi=target_a_ulpi_res)
             )
-            # Note: The port assignments (PC on port C, Mouse on port A) are handled
-            # internally in the passthrough.py file via the PHYTranslatorHandler class
 
-            # LEDs - Cynthion r1.4 has 6 LEDs (0-5)
-            m.submodules.leds = leds = LEDController(platform, num_leds=6)
+            # Set up Device Translator (for talking to PC)
+            m.submodules.dev_translator = self.dev_translator = DomainRenamer("sync")(
+                UTMITranslator(ulpi=target_c_ulpi_res)
+            )
 
-            # Command acknowledgment system
-            m.submodules.command_ack = command_ack = CommandAckSystem()
-
-            # Handle cmd_parser (which might be None)
-            cmd_parser = analyzer.get_cmd_parser()
-
-            # Update LED mappings to reflect corrected ports
-            if cmd_parser is not None:
-                cmd_valid = Signal()
-                cmd_error = Signal()
-                error_code = Signal(8)
-
-                # Add a small FSM to detect command completion and errors
-                with m.FSM(domain="sync"):
-                    with m.State("IDLE"):
-                        m.d.sync += [
-                            cmd_valid.eq(0),
-                            cmd_error.eq(0),
-                            error_code.eq(command_ack.ERR_NONE),
-                        ]
-                        # Detect command completion from parser
-                        with m.If(cmd_parser.o_cmd_ready):
-                            # Check for common error conditions (could add more checks)
-                            with m.If(
-                                (cmd_parser.o_dx == 0)
-                                & (cmd_parser.o_dy == 0)
-                                & (cmd_parser.o_buttons == 0)
-                            ):
-                                # All zeros might be a valid "no-op" command, but we'll treat it as success
-                                m.d.sync += cmd_error.eq(0)
-                            with m.Elif(
-                                (cmd_parser.o_dx > 127) | (cmd_parser.o_dy > 127)
-                            ):
-                                # Values too large - might cause unexpected behavior
-                                m.d.sync += [
-                                    cmd_error.eq(1),
-                                    error_code.eq(command_ack.ERR_VALUE),
-                                ]
-                            with m.Else():
-                                m.d.sync += cmd_error.eq(0)
-
-                            m.d.sync += cmd_valid.eq(1)
-                            m.next = "ACK"
-
-                    with m.State("ACK"):
-                        # One-cycle delay to ensure signals are stable
-                        m.d.comb += [
-                            command_ack.i_cmd_processed.eq(cmd_valid),
-                            command_ack.i_cmd_error.eq(cmd_error),
-                            command_ack.i_error_code.eq(error_code),
-                        ]
-                        m.next = "IDLE"
-
-                # Connect acknowledgment system to UART TX
-                m.d.comb += [
-                    command_ack.i_uart_stream.valid.eq(analyzer.i_uart_tx_stream.valid),
-                    command_ack.i_uart_stream.payload.eq(
-                        analyzer.i_uart_tx_stream.payload
-                    ),
-                    command_ack.i_uart_stream.first.eq(analyzer.i_uart_tx_stream.first),
-                    command_ack.i_uart_stream.last.eq(analyzer.i_uart_tx_stream.last),
-                    analyzer.i_uart_tx_stream.ready.eq(command_ack.i_uart_stream.ready),
-                ]
-
-                # Map LED 4 to handshake status (command channel)
-                m.d.comb += leds.led_outputs[4].eq(cmd_parser.o_handshake_complete)
-
-                # Add LED 5 for UART command port status
-                m.d.comb += leds.led_outputs[5].eq(analyzer.o_uart_rx_activity)
-            else:
-                # Skip command parser functionality if not available
-                print(
-                    "Warning: Command parser not available. Command acknowledgment disabled."
-                )
-
-                # Connect acknowledgment system to UART TX but without ready signal
-                m.d.comb += [
-                    command_ack.i_uart_stream.valid.eq(analyzer.i_uart_tx_stream.valid),
-                    command_ack.i_uart_stream.payload.eq(
-                        analyzer.i_uart_tx_stream.payload
-                    ),
-                    command_ack.i_uart_stream.first.eq(analyzer.i_uart_tx_stream.first),
-                    command_ack.i_uart_stream.last.eq(analyzer.i_uart_tx_stream.last),
-                    # Removing the ready signal connection to avoid driver conflicts
-                    # analyzer.i_uart_tx_stream.ready.eq(command_ack.i_uart_stream.ready)
-                ]
-
-                # Set LED 4 to always off or to another signal
-                m.d.comb += leds.led_outputs[4].eq(0)  # LED 4: Off when no handshake
-
-            # --- Connect LEDs ---
-            # Update LED mappings for corrected port assignments
+            # Simplified FIFO connection using stream interfaces
+            m.submodules.fifo = fifo = StreamFIFO()  # Use StreamFIFO
             m.d.comb += [
-                leds.led_outputs[0].eq(
-                    analyzer.o_command_rx_activity
-                ),  # LED 0: UART command activity
-                leds.led_outputs[1].eq(
-                    analyzer.o_host_packet_activity
-                ),  # LED 1: Host (Port C - PC) activity
-                leds.led_outputs[2].eq(
-                    analyzer.o_dev_packet_activity
-                ),  # LED 2: Device (Port A - Mouse) activity
-                leds.led_outputs[3].eq(
-                    analyzer.o_uart_tx_activity
-                ),  # LED 3: Debug output activity
-                # LED 4: Command handshake status (set above)
-                # LED 5: UART RX activity (set above)
+                # Host (A) translator output connected to FIFO input
+                self.host_translator.phy.connect(fifo.input),
+                # FIFO output connected to Device (C) translator input
+                fifo.output.connect(self.dev_translator.phy),
             ]
-
-            # Add connection for the final UART output stream -
-            # this is now from the output of the CommandAckSystem
-            # since it handles both ACK generation and normal UART output
-            uart_tx_stream = command_ack.o_tx_stream
+            # Removed outdated comment about passthrough.py handling connections
 
         return m
 

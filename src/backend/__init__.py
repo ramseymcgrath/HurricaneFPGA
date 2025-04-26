@@ -1,19 +1,26 @@
 # -*- coding: utf-8 -*-
+# Only import the simplified handler and UARTTXHandler from passthrough
 from .passthrough import (
     USBDataPassthroughHandler,
     UARTTXHandler,
-    PacketArbiter,
-    PHYTranslatorHandler,
+    # Removed PacketArbiter
+    # Removed PHYTranslatorHandler
 )
 from .interfaces import (
     USBPacketID,
     StreamInterface,
-    USBInStreamInterface,
-    USBOutStreamInterface,
+    # Removed USBInStreamInterface
+    # Removed USBOutStreamInterface
 )
-from .mouse_injector import SimpleMouseInjector, MouseCommandParser, MouseCommandParser
+
+# Corrected duplicate MouseCommandParser import
+from .mouse_injector import SimpleMouseInjector, MouseCommandParser
 from .utils import AsyncSerialRX, AsyncSerialTX, ActivityMonitor, LEDController
-from .fifo import HyperRAMPacketFIFO, Stream16to8, SyncFIFOBuffered
+
+# Only StreamFIFO is defined in fifo.py now
+from .fifo import StreamFIFO  # Assuming StreamFIFO should be imported/exported
+
+# Removed HyperRAMPacketFIFO, Stream16to8, SyncFIFOBuffered imports
 from .usb_serial import (
     USBSerialDevice,
     USBRequestHandler,
@@ -23,28 +30,28 @@ from .usb_serial import (
 from .uart import CommandAckSystem, UARTTXHandler
 
 __all__ = [
-    "USBDataPassthroughHandler",
+    "USBDataPassthroughHandler",  # Keep simplified handler
     "SimpleMouseInjector",
     "MouseCommandParser",
-    "HyperRAMPacketFIFO",
-    "StreamInterface",
+    # Removed HyperRAMPacketFIFO
+    "StreamInterface",  # Keep standard interface
+    "StreamFIFO",  # Added StreamFIFO export
     "AsyncSerialRX",
     "AsyncSerialTX",
     "ActivityMonitor",
     "LEDController",
-    "USBInStreamInterface",
-    "USBOutStreamInterface",
-    "USBPacketID",
+    # Removed USBInStreamInterface
+    # Removed USBOutStreamInterface
+    "USBPacketID",  # Keep
     "CommandAckSystem",
-    "UARTTXHandler",
-    "PacketArbiter",
-    "PHYTranslatorHandler",
+    "UARTTXHandler",  # Keep (imported above)
+    # Removed PacketArbiter
+    # Removed PHYTranslatorHandler
     "USBSerialDevice",
     "USBRequestHandler",
     "USBStreamInEndpoint",
     "USBStreamOutEndpoint",
-    "Stream16to8",
-    "SyncFIFOBuffered",
-    "AsyncFIFOBuffered",
-    "USBPacketID",
+    # Removed Stream16to8
+    # Removed SyncFIFOBuffered (usually imported directly from amaranth.lib.fifo)
+    "AsyncFIFOBuffered",  # Keep? (used in simplified passthrough for CDC)
 ]

@@ -20,4 +20,4 @@ ENV BUILD_LOCAL="1"
 COPY . /work
 WORKDIR /work
 # Default command (change if needed)
-CMD ["python", "src/backend/top.py"]
+CMD ["python", "src/backend_simple/top.py"]

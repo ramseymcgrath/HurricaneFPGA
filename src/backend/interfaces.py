@@ -1,10 +1,10 @@
 from amaranth import Signal
 
 __all__ = [
-    "StreamInterface",
-    "USBInStreamInterface",
-    "USBOutStreamInterface",
+    "StreamInterface",  # Renamed from FIFOStreamInterface
     "USBPacketID",
+    # Removed USBInStreamInterface, USBOutStreamInterface if they are part of old complexity
+    # Assuming they are for now, can add back if needed.
 ]
 
 
@@ -19,40 +19,13 @@ class USBPacketID:
     MDATA = 0b1111
 
 
-class StreamInterface:
+class StreamInterface:  # Renamed from FIFOStreamInterface
+    """Standard stream interface with valid/ready/payload."""
+
     def __init__(self, payload_width=8):
         self.payload_width = payload_width
         self.valid = Signal()
         self.ready = Signal()
         self.payload = Signal(payload_width)
-        self.first = Signal()
-        self.last = Signal()
 
-    def stream_eq(self, other, *, omit=None):
-        if omit is None:
-            omit = set()
-        elif isinstance(omit, str):
-            omit = {omit}
-        connect_list = []
-        if "valid" not in omit:
-            connect_list.append(other.valid.eq(self.valid))
-        if "payload" not in omit:
-            connect_list.append(other.payload.eq(self.payload))
-        if "first" not in omit:
-            connect_list.append(other.first.eq(self.first))
-        if "last" not in omit:
-            connect_list.append(other.last.eq(self.last))
-        # Add ready connection in reverse
-        if "ready" not in omit:
-            connect_list.append(self.ready.eq(other.ready))
-        return connect_list
-
-
-class USBInStreamInterface(StreamInterface):
-    def __init__(self, payload_width=8):
-        super().__init__(payload_width)
-
-
-class USBOutStreamInterface(StreamInterface):
-    def __init__(self, payload_width=8):
-        super().__init__(payload_width)
+    # Removed connect_fifo method, use standard .connect()
