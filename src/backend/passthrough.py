@@ -6,14 +6,14 @@
 from amaranth import Elaboratable, Module, Signal, DomainRenamer, Cat, C, Record, Array
 from amaranth.build.res import ResourceError
 
-# from amaranth.lib.fifo import SyncFIFOBuffered, AsyncFIFOBuffered # Removed
+
 from luna.gateware.interface.ulpi import UTMITranslator  # Keep for Control Port
 from amaranth.lib.cdc import FFSynchronizer  # Keep for simple signal CDC
 
-# from luna.gateware.interface.psram import HyperRAMInterface, HyperRAMPHY # Removed
+
 from .mouse_injector import SimpleMouseInjector, MouseCommandParser
 
-# from .fifo import HyperRAMPacketFIFO # Removed
+l
 from .utils import AsyncSerialRX, AsyncSerialTX
 from .uart import UARTTXHandler
 from .usb_serial import USBSerialDevice
@@ -25,9 +25,6 @@ __all__ = [
     "USBDataPassthroughHandler",
     
 ]
-
-# --- Removed PacketArbiter Class ---
-# --- Removed PHYTranslatorHandler Class ---
 
 
 class USBDataPassthroughHandler(Elaboratable):
