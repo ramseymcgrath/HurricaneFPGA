@@ -374,11 +374,3 @@ class USBDataPassthroughHandler(Elaboratable):
                 m.d.comb += self.i_uart_tx_stream.valid.eq(0)
 
         return m
-
-
-# --- Removed StreamAdapter Class ---
-# (Class definition from line 765 to 804 deleted)
-
-
-# --- Removed StreamAdapter Class ---
-# (Class definition previously here was deleted)
