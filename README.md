@@ -3,14 +3,18 @@
 [![Build Status](https://github.com/ramseymcgrath/HurricaneFPGA/actions/workflows/get_bitstream.yml/badge.svg)](https://github.com/ramseymcgrath/HurricaneFPGA/actions/workflows/build_and_test.yml)
 [![Code Coverage](https://codecov.io/gh/ramseymcgrath/HurricaneFPGA/branch/main/graph/badge.svg)](https://codecov.io/gh/yourusername/kmboxetry)
 
-> ✨ **Current status – UART‑controlled HID injection with handshake**  
-> The latest bitstream (`src/backend/mouse_streamer.py`) provides a **USB Full‑Speed passthrough**, a **tiny UART‑driven injector**, and a **handshake mechanism** with visual feedback.  
-> The Rust CLI (`packetry_injector`) performs an initial handshake with the FPGA, provides command acknowledgments, and acts as a gateway for network commands.
+> ✨ **Current status – Full HDL Implementation Released!**  
+> The project now provides **two implementations**:
+> - **New HDL Implementation** (`HDL/`) - A complete Verilog implementation with enhanced features
+> - **Legacy Python/Luna** (`legacy/`) - Original amaranth/LUNA implementation with UART-controlled HID injection
+>
+> Both provide USB passthrough, HID injection capabilities, and command interfaces.
 
 HurricaneFPGA explores low‑level USB manipulation on the **[Cynthion FPGA](https://greatscottgadgets.com/cynthion/)**. It ships:
 
-- **Amaranth/LUNA gateware** – FS passthrough + UART HID injection.
-- **Rust CLI** – network‑to‑UART bridge for easy scripting.
+- **Hurricane HDL** – Complete Verilog implementation for advanced USB manipulation
+- **Legacy Amaranth/LUNA gateware** – FS passthrough + UART HID injection
+- **Rust CLI** – network‑to‑UART bridge for easy scripting
 
 ---
 
@@ -59,7 +63,29 @@ You only need docker for the initial build now, use `docker build -t amaranth-cy
 
 ### 2. Flash the FPGA gateware
 
-Python should be able to run this with `python top.py`
+#### Legacy Python/Luna Implementation
+Python should be able to run this with `python legacy/src/flash_fpga.py`
+
+#### Hurricane HDL Implementation
+The HDL implementation provides dedicated flashing tools:
+```bash
+cd HDL/tools
+./flash_cynthion.sh  # Flash the precompiled bitstream
+```
+
+For advanced builds and debugging:
+```bash
+# Compile a custom bitstream
+./compile_bitstream.sh
+
+# Validate HDL before building
+./validate_hdl.sh
+
+# Debug connected Cynthion
+python cynthion_debugger.py
+```
+
+See `HDL/architecture.md` and `HDL/transparent_proxy_implementation.md` for detailed documentation on the HDL implementation.
 
 ### 4. Build the Rust CLI
 

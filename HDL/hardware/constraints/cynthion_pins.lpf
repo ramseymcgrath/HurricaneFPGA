@@ -1,0 +1,90 @@
+## Cynthion ECP5 Pin Constraints File
+## Hurricane FPGA Redux - USB Sniffer Transparent Proxy
+
+# Clock Pins
+LOCATE COMP "clk_60mhz" SITE "P6";
+IOBUF PORT "clk_60mhz" IO_TYPE=LVCMOS33;
+FREQUENCY PORT "clk_60mhz" 60.000 MHz;
+
+# Reset Pin
+LOCATE COMP "reset_n" SITE "P23";
+IOBUF PORT "reset_n" IO_TYPE=LVCMOS33 PULLMODE=UP;
+
+# USB PHY 0 - CONTROL (Internal MCU Access)
+## Data Lines
+LOCATE COMP "usb0_dp" SITE "C16";
+LOCATE COMP "usb0_dn" SITE "D16";
+IOBUF PORT "usb0_dp" IO_TYPE=LVCMOS33;
+IOBUF PORT "usb0_dn" IO_TYPE=LVCMOS33;
+
+## Control Lines
+LOCATE COMP "usb0_pullup" SITE "E16";
+IOBUF PORT "usb0_pullup" IO_TYPE=LVCMOS33;
+
+# USB PHY 1 - TARGET A/C (Shared PHY)
+## Data Lines
+LOCATE COMP "usb1_dp" SITE "F14";
+LOCATE COMP "usb1_dn" SITE "F15";
+IOBUF PORT "usb1_dp" IO_TYPE=LVCMOS33;
+IOBUF PORT "usb1_dn" IO_TYPE=LVCMOS33;
+
+## Control Lines
+LOCATE COMP "usb1_pullup" SITE "G14";
+IOBUF PORT "usb1_pullup" IO_TYPE=LVCMOS33;
+
+# USB PHY 2 - TARGET B (Dedicated)
+## Data Lines
+LOCATE COMP "usb2_dp" SITE "J16";
+LOCATE COMP "usb2_dn" SITE "K16";
+IOBUF PORT "usb2_dp" IO_TYPE=LVCMOS33;
+IOBUF PORT "usb2_dn" IO_TYPE=LVCMOS33;
+
+## Control Lines
+LOCATE COMP "usb2_pullup" SITE "L16";
+IOBUF PORT "usb2_pullup" IO_TYPE=LVCMOS33;
+
+# Status LEDs
+LOCATE COMP "led[0]" SITE "B2";
+LOCATE COMP "led[1]" SITE "C2";
+LOCATE COMP "led[2]" SITE "C1";
+LOCATE COMP "led[3]" SITE "D2";
+LOCATE COMP "led[4]" SITE "D1";
+LOCATE COMP "led[5]" SITE "E2";
+LOCATE COMP "led[6]" SITE "E1";
+LOCATE COMP "led[7]" SITE "H3";
+IOBUF PORT "led[0]" IO_TYPE=LVCMOS33;
+IOBUF PORT "led[1]" IO_TYPE=LVCMOS33;
+IOBUF PORT "led[2]" IO_TYPE=LVCMOS33;
+IOBUF PORT "led[3]" IO_TYPE=LVCMOS33;
+IOBUF PORT "led[4]" IO_TYPE=LVCMOS33;
+IOBUF PORT "led[5]" IO_TYPE=LVCMOS33;
+IOBUF PORT "led[6]" IO_TYPE=LVCMOS33;
+IOBUF PORT "led[7]" IO_TYPE=LVCMOS33;
+
+# Debug Header
+LOCATE COMP "debug[0]" SITE "N3";
+LOCATE COMP "debug[1]" SITE "N4";
+LOCATE COMP "debug[2]" SITE "N5";
+LOCATE COMP "debug[3]" SITE "M3";
+IOBUF PORT "debug[0]" IO_TYPE=LVCMOS33;
+IOBUF PORT "debug[1]" IO_TYPE=LVCMOS33;
+IOBUF PORT "debug[2]" IO_TYPE=LVCMOS33;
+IOBUF PORT "debug[3]" IO_TYPE=LVCMOS33;
+
+# Internal PLL Generation
+LOCATE COMP "pll_locked" SITE "R1";
+
+# ECP5 Global Clock Constraints
+DEFINE PORT GROUP "clocks" "clk_60mhz";
+DEFINE PORT GROUP "inputs" "reset_n" "usb0_dp" "usb0_dn" "usb1_dp" "usb1_dn" "usb2_dp" "usb2_dn";
+DEFINE PORT GROUP "outputs" "led[0]" "led[1]" "led[2]" "led[3]" "led[4]" "led[5]" "led[6]" "led[7]" 
+                            "usb0_pullup" "usb1_pullup" "usb2_pullup"
+                            "debug[0]" "debug[1]" "debug[2]" "debug[3]";
+
+# Timing Constraints
+DEFINE NET GROUP "clk_group" "clk_60mhz" "pll_clk_120mhz" "pll_clk_240mhz";
+DEFINE NET GROUP "sync_group" "reset_n" "reset_sync" "pll_locked";
+
+# Path Delay Constraints
+DEFINE DELAY GROUP "input_delay" "inputs";
+DEFINE DELAY GROUP "output_delay" "outputs";
