@@ -69,7 +69,9 @@ module buffer_manager (
     localparam MAGIC_BYTE = 8'hA5;      // Magic byte value
     
     // Buffer memory (implemented as dual-port BRAM)
-    reg [7:0] buffer_mem [0:BUFFER_SIZE-1];
+    // Split into two separate memories with explicit RAM synthesis attributes
+    (* ram_style = "block" *) reg [7:0] buffer_mem_host [0:BUFFER_SIZE_PER_DIR-1];
+    (* ram_style = "block" *) reg [7:0] buffer_mem_device [0:BUFFER_SIZE_PER_DIR-1];
     
     // Write control
     reg [ADDR_WIDTH-1:0] write_ptr;     // Write pointer
@@ -235,18 +237,78 @@ module buffer_manager (
                         if (write_header_idx < HEADER_SIZE) begin
                             // Write header bytes
                             case (write_header_idx)
-                                4'd0: buffer_mem[write_ptr] <= MAGIC_BYTE;
-                                4'd1: buffer_mem[write_ptr] <= write_flags;
-                                4'd2: buffer_mem[write_ptr] <= write_length[7:0];   // Length low byte
-                                4'd3: buffer_mem[write_ptr] <= write_length[15:8];  // Length high byte
-                                4'd4: buffer_mem[write_ptr] <= write_timestamp[7:0];
-                                4'd5: buffer_mem[write_ptr] <= write_timestamp[15:8];
-                                4'd6: buffer_mem[write_ptr] <= write_timestamp[23:16];
-                                4'd7: buffer_mem[write_ptr] <= write_timestamp[31:24];
-                                4'd8: buffer_mem[write_ptr] <= write_timestamp[39:32];
-                                4'd9: buffer_mem[write_ptr] <= write_timestamp[47:40];
-                                4'd10: buffer_mem[write_ptr] <= write_timestamp[55:48];
-                                4'd11: buffer_mem[write_ptr] <= write_timestamp[63:56];
+                                4'd0: begin
+                                    if (write_flags[0] == 0) // Host direction
+                                        buffer_mem_host[write_ptr] <= MAGIC_BYTE;
+                                    else // Device direction
+                                        buffer_mem_device[write_ptr - BUFFER_SIZE_PER_DIR] <= MAGIC_BYTE;
+                                end
+                                4'd1: begin
+                                    if (write_flags[0] == 0) // Host direction
+                                        buffer_mem_host[write_ptr] <= write_flags;
+                                    else // Device direction
+                                        buffer_mem_device[write_ptr - BUFFER_SIZE_PER_DIR] <= write_flags;
+                                end
+                                4'd2: begin
+                                    if (write_flags[0] == 0) // Host direction
+                                        buffer_mem_host[write_ptr] <= write_length[7:0];
+                                    else // Device direction
+                                        buffer_mem_device[write_ptr - BUFFER_SIZE_PER_DIR] <= write_length[7:0];
+                                end
+                                4'd3: begin
+                                    if (write_flags[0] == 0) // Host direction
+                                        buffer_mem_host[write_ptr] <= write_length[15:8];
+                                    else // Device direction
+                                        buffer_mem_device[write_ptr - BUFFER_SIZE_PER_DIR] <= write_length[15:8];
+                                end
+                                4'd4: begin
+                                    if (write_flags[0] == 0) // Host direction
+                                        buffer_mem_host[write_ptr] <= write_timestamp[7:0];
+                                    else // Device direction
+                                        buffer_mem_device[write_ptr - BUFFER_SIZE_PER_DIR] <= write_timestamp[7:0];
+                                end
+                                4'd5: begin
+                                    if (write_flags[0] == 0) // Host direction
+                                        buffer_mem_host[write_ptr] <= write_timestamp[15:8];
+                                    else // Device direction
+                                        buffer_mem_device[write_ptr - BUFFER_SIZE_PER_DIR] <= write_timestamp[15:8];
+                                end
+                                4'd6: begin
+                                    if (write_flags[0] == 0) // Host direction
+                                        buffer_mem_host[write_ptr] <= write_timestamp[23:16];
+                                    else // Device direction
+                                        buffer_mem_device[write_ptr - BUFFER_SIZE_PER_DIR] <= write_timestamp[23:16];
+                                end
+                                4'd7: begin
+                                    if (write_flags[0] == 0) // Host direction
+                                        buffer_mem_host[write_ptr] <= write_timestamp[31:24];
+                                    else // Device direction
+                                        buffer_mem_device[write_ptr - BUFFER_SIZE_PER_DIR] <= write_timestamp[31:24];
+                                end
+                                4'd8: begin
+                                    if (write_flags[0] == 0) // Host direction
+                                        buffer_mem_host[write_ptr] <= write_timestamp[39:32];
+                                    else // Device direction
+                                        buffer_mem_device[write_ptr - BUFFER_SIZE_PER_DIR] <= write_timestamp[39:32];
+                                end
+                                4'd9: begin
+                                    if (write_flags[0] == 0) // Host direction
+                                        buffer_mem_host[write_ptr] <= write_timestamp[47:40];
+                                    else // Device direction
+                                        buffer_mem_device[write_ptr - BUFFER_SIZE_PER_DIR] <= write_timestamp[47:40];
+                                end
+                                4'd10: begin
+                                    if (write_flags[0] == 0) // Host direction
+                                        buffer_mem_host[write_ptr] <= write_timestamp[55:48];
+                                    else // Device direction
+                                        buffer_mem_device[write_ptr - BUFFER_SIZE_PER_DIR] <= write_timestamp[55:48];
+                                end
+                                4'd11: begin
+                                    if (write_flags[0] == 0) // Host direction
+                                        buffer_mem_host[write_ptr] <= write_timestamp[63:56];
+                                    else // Device direction
+                                        buffer_mem_device[write_ptr - BUFFER_SIZE_PER_DIR] <= write_timestamp[63:56];
+                                end
                             endcase
                             
                             // Update pointers and counters
@@ -271,7 +333,11 @@ module buffer_manager (
                             
                             // Write first data byte if available
                             if (write_valid) begin
-                                buffer_mem[write_ptr] <= write_data;
+                                // Select appropriate buffer based on direction
+                                if (write_flags[0] == 0) // Host direction
+                                    buffer_mem_host[write_ptr] <= write_data;
+                                else // Device direction
+                                    buffer_mem_device[write_ptr - BUFFER_SIZE_PER_DIR] <= write_data;
                                 write_ptr <= write_ptr + 1'b1;
                                 write_length <= write_length + 1'b1;
                                 
@@ -291,7 +357,11 @@ module buffer_manager (
                         if (write_valid) begin
                             // Check for buffer space
                             if (write_ready) begin
-                                buffer_mem[write_ptr] <= write_data;
+                                // Select appropriate buffer based on direction
+                                if (write_flags[0] == 0) // Host direction
+                                    buffer_mem_host[write_ptr] <= write_data;
+                                else // Device direction
+                                    buffer_mem_device[write_ptr - BUFFER_SIZE_PER_DIR] <= write_data;
                                 write_ptr <= write_ptr + 1'b1;
                                 write_length <= write_length + 1'b1;
                                 
@@ -311,8 +381,14 @@ module buffer_manager (
                         end else begin
                             // No more data - complete packet
                             // Update the length field in the header
-                            buffer_mem[write_ptr - write_length - HEADER_SIZE + 2] <= write_length[7:0];
-                            buffer_mem[write_ptr - write_length - HEADER_SIZE + 3] <= write_length[15:8];
+                            // Update length in the appropriate buffer
+                            if (write_flags[0] == 0) begin // Host direction
+                                buffer_mem_host[write_ptr - write_length - HEADER_SIZE + 2] <= write_length[7:0];
+                                buffer_mem_host[write_ptr - write_length - HEADER_SIZE + 3] <= write_length[15:8];
+                            end else begin // Device direction
+                                buffer_mem_device[write_ptr - BUFFER_SIZE_PER_DIR - write_length - HEADER_SIZE + 2] <= write_length[7:0];
+                                buffer_mem_device[write_ptr - BUFFER_SIZE_PER_DIR - write_length - HEADER_SIZE + 3] <= write_length[15:8];
+                            end
                             
                             // Update packet counters
                             if (buffer_mode == 2'b01) begin
@@ -429,7 +505,9 @@ module buffer_manager (
                         if (read_header_idx < HEADER_SIZE) begin
                             case (read_header_idx)
                                 4'd0: begin // Magic byte
-                                    if (buffer_mem[read_ptr] == MAGIC_BYTE) begin
+                                    // Check magic byte in appropriate buffer
+                                    if ((read_direction == 0 && buffer_mem_host[read_ptr] == MAGIC_BYTE) ||
+                                        (read_direction == 1 && buffer_mem_device[read_ptr - BUFFER_SIZE_PER_DIR] == MAGIC_BYTE)) begin
                                         read_ptr <= read_ptr + 1'b1;
                                         read_header_idx <= read_header_idx + 1'b1;
                                     end else begin
@@ -440,68 +518,107 @@ module buffer_manager (
                                 end
                                 
                                 4'd1: begin // Flags
-                                    read_flags <= buffer_mem[read_ptr];
+                                    // Read flags from appropriate buffer
+                                    if (read_direction == 0)
+                                        read_flags <= buffer_mem_host[read_ptr];
+                                    else
+                                        read_flags <= buffer_mem_device[read_ptr - BUFFER_SIZE_PER_DIR];
                                     read_ptr <= read_ptr + 1'b1;
                                     read_header_idx <= read_header_idx + 1'b1;
                                 end
                                 
                                 4'd2: begin // Length low byte
-                                    packet_length[7:0] <= buffer_mem[read_ptr];
+                                    // Read length low byte from appropriate buffer
+                                    if (read_direction == 0)
+                                        packet_length[7:0] <= buffer_mem_host[read_ptr];
+                                    else
+                                        packet_length[7:0] <= buffer_mem_device[read_ptr - BUFFER_SIZE_PER_DIR];
                                     read_ptr <= read_ptr + 1'b1;
                                     read_header_idx <= read_header_idx + 1'b1;
                                 end
                                 
                                 4'd3: begin // Length high byte
-                                    packet_length[15:8] <= buffer_mem[read_ptr];
+                                    // Read length high byte from appropriate buffer
+                                    if (read_direction == 0) begin
+                                        packet_length[15:8] <= buffer_mem_host[read_ptr];
+                                        read_remaining <= {buffer_mem_host[read_ptr], packet_length[7:0]};
+                                    end else begin
+                                        packet_length[15:8] <= buffer_mem_device[read_ptr - BUFFER_SIZE_PER_DIR];
+                                        read_remaining <= {buffer_mem_device[read_ptr - BUFFER_SIZE_PER_DIR], packet_length[7:0]};
+                                    end
                                     read_ptr <= read_ptr + 1'b1;
                                     read_header_idx <= read_header_idx + 1'b1;
-                                    read_remaining <= {buffer_mem[read_ptr], packet_length[7:0]};
                                 end
                                 
                                 4'd4: begin // Timestamp bytes
-                                    read_timestamp[7:0] <= buffer_mem[read_ptr];
+                                    // Read timestamp bytes from appropriate buffer
+                                    if (read_direction == 0)
+                                        read_timestamp[7:0] <= buffer_mem_host[read_ptr];
+                                    else
+                                        read_timestamp[7:0] <= buffer_mem_device[read_ptr - BUFFER_SIZE_PER_DIR];
                                     read_ptr <= read_ptr + 1'b1;
                                     read_header_idx <= read_header_idx + 1'b1;
                                 end
                                 
                                 4'd5: begin
-                                    read_timestamp[15:8] <= buffer_mem[read_ptr];
+                                    if (read_direction == 0)
+                                        read_timestamp[15:8] <= buffer_mem_host[read_ptr];
+                                    else
+                                        read_timestamp[15:8] <= buffer_mem_device[read_ptr - BUFFER_SIZE_PER_DIR];
                                     read_ptr <= read_ptr + 1'b1;
                                     read_header_idx <= read_header_idx + 1'b1;
                                 end
                                 
                                 4'd6: begin
-                                    read_timestamp[23:16] <= buffer_mem[read_ptr];
+                                    if (read_direction == 0)
+                                        read_timestamp[23:16] <= buffer_mem_host[read_ptr];
+                                    else
+                                        read_timestamp[23:16] <= buffer_mem_device[read_ptr - BUFFER_SIZE_PER_DIR];
                                     read_ptr <= read_ptr + 1'b1;
                                     read_header_idx <= read_header_idx + 1'b1;
                                 end
                                 
                                 4'd7: begin
-                                    read_timestamp[31:24] <= buffer_mem[read_ptr];
+                                    if (read_direction == 0)
+                                        read_timestamp[31:24] <= buffer_mem_host[read_ptr];
+                                    else
+                                        read_timestamp[31:24] <= buffer_mem_device[read_ptr - BUFFER_SIZE_PER_DIR];
                                     read_ptr <= read_ptr + 1'b1;
                                     read_header_idx <= read_header_idx + 1'b1;
                                 end
                                 
                                 4'd8: begin
-                                    read_timestamp[39:32] <= buffer_mem[read_ptr];
+                                    if (read_direction == 0)
+                                        read_timestamp[39:32] <= buffer_mem_host[read_ptr];
+                                    else
+                                        read_timestamp[39:32] <= buffer_mem_device[read_ptr - BUFFER_SIZE_PER_DIR];
                                     read_ptr <= read_ptr + 1'b1;
                                     read_header_idx <= read_header_idx + 1'b1;
                                 end
                                 
                                 4'd9: begin
-                                    read_timestamp[47:40] <= buffer_mem[read_ptr];
+                                    if (read_direction == 0)
+                                        read_timestamp[47:40] <= buffer_mem_host[read_ptr];
+                                    else
+                                        read_timestamp[47:40] <= buffer_mem_device[read_ptr - BUFFER_SIZE_PER_DIR];
                                     read_ptr <= read_ptr + 1'b1;
                                     read_header_idx <= read_header_idx + 1'b1;
                                 end
                                 
                                 4'd10: begin
-                                    read_timestamp[55:48] <= buffer_mem[read_ptr];
+                                    if (read_direction == 0)
+                                        read_timestamp[55:48] <= buffer_mem_host[read_ptr];
+                                    else
+                                        read_timestamp[55:48] <= buffer_mem_device[read_ptr - BUFFER_SIZE_PER_DIR];
                                     read_ptr <= read_ptr + 1'b1;
                                     read_header_idx <= read_header_idx + 1'b1;
                                 end
                                 
                                 4'd11: begin
-                                    read_timestamp[63:56] <= buffer_mem[read_ptr];
+                                    if (read_direction == 0)
+                                        read_timestamp[63:56] <= buffer_mem_host[read_ptr];
+                                    else
+                                        read_timestamp[63:56] <= buffer_mem_device[read_ptr - BUFFER_SIZE_PER_DIR];
                                     read_ptr <= read_ptr + 1'b1;
                                     read_header_idx <= read_header_idx + 1'b1;
                                     read_state <= PKT_DATA;
@@ -524,7 +641,11 @@ module buffer_manager (
                     PKT_DATA: begin
                         if (read_req && read_remaining > 0) begin
                             // Output packet data bytes
-                            read_data <= buffer_mem[read_ptr];
+                            // Read data from appropriate buffer
+                            if (read_direction == 0)
+                                read_data <= buffer_mem_host[read_ptr];
+                            else
+                                read_data <= buffer_mem_device[read_ptr - BUFFER_SIZE_PER_DIR];
                             read_valid <= 1'b1;
                             read_ptr <= read_ptr + 1'b1;
                             read_remaining <= read_remaining - 1'b1;
