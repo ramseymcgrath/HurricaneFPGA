@@ -1,11 +1,13 @@
-name: Build and Test (Rust Native + Amaranth Docker)
+name: Build and Test (Rust Native + Amaranth Docker + HDL Validation)
 
 on:
   push:
     paths:
       # Trigger on changes to relevant files
-      - 'src/backend/**'
-      - 'src/**'
+      - 'legacy/src/backend/**'
+      - 'legacy/src/**'
+      - 'HDL/hardware/rtl/**'
+      - 'HDL/tools/**'
       - '.github/workflows/build_and_test.yml'
       - 'Cargo.toml'
       - 'Cargo.lock'
@@ -18,6 +20,26 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        
+      # HDL Validation
+      - name: Install Icarus Verilog for HDL validation
+        run: sudo apt-get update && sudo apt-get install -y iverilog
+        
+      - name: Validate HDL Files
+        run: |
+          echo "Running HDL validation..."
+          chmod +x ./HDL/tools/validate_hdl.sh
+          # Create a report file with detailed output
+          echo "# HDL Validation Report - $(date)" > hdl_validation_report.txt
+          echo "## Running validation on HDL files" >> hdl_validation_report.txt
+          ./HDL/tools/validate_hdl.sh --verbose | tee -a hdl_validation_report.txt
+          # Store exit code to verify if validation passed
+          HDL_VALIDATION_EXIT=$?
+          echo -e "\n## Validation Result: $([[ $HDL_VALIDATION_EXIT -eq 0 ]] && echo 'PASSED' || echo 'FAILED')" >> hdl_validation_report.txt
+          
+          # Allow the workflow to continue even if HDL validation fails
+          # This ensures artifacts are still generated for inspection
+          exit 0
 
       # Native Rust Setup
       - name: Setup Rust
@@ -78,7 +100,7 @@ jobs:
           fi
           # Run tarpaulin natively
           cargo tarpaulin --out Xml --output-dir coverage \
-              --exclude-files src/usb.rs --packages packetry_injector \
+              --exclude-files legacy/src/usb.rs --packages packetry_injector \
               --verbose -- --test-threads=1 || echo "Tarpaulin failed, proceeding..."
 
       - name: Upload coverage report artifact
@@ -115,6 +137,12 @@ jobs:
              echo "- Added other Rust release binaries"
           else
              echo "WARN: No Rust release binary found to package."
+          fi
+          
+          # Add HDL validation report if available
+          if [ -f hdl_validation_report.txt ]; then
+             cp hdl_validation_report.txt ${ARTIFACT_DIR}/
+             echo "- Added HDL validation report"
           fi
 
           echo "Packaged files:"
