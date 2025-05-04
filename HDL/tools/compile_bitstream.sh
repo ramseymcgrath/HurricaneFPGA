@@ -75,7 +75,7 @@ YOSYS_SCRIPT="$BUILD_DIR/synth.ys"
   done
   echo "hierarchy -check -top $TOP_MODULE"
   echo "# Use multi-threading with ABC"
-  echo "synth_ecp5 -abc9 -abc9-climits -threads $NUM_THREADS -json $SYNTH_JSON"
+  echo "synth_ecp5 -abc9 -json $SYNTH_JSON"
 } > "$YOSYS_SCRIPT"
 
 echo "[synth] Starting Yosys..."
