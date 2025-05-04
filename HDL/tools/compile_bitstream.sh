@@ -74,7 +74,10 @@ YOSYS_SCRIPT="$BUILD_DIR/synth.ys"
     echo "read_verilog -sv $file"
   done
   echo "hierarchy -check -top $TOP_MODULE"
-  echo "set yosys_abc_exec abc -D $NUM_THREADS"
+  echo "# Set ABC parameters for multi-threading"
+  echo "plugin -i design"
+  echo "plugin -i abc"
+  echo "abc -D $NUM_THREADS"
   echo "synth_ecp5 -json $SYNTH_JSON"
 } > "$YOSYS_SCRIPT"
 
@@ -98,7 +101,7 @@ nextpnr_args=(
   --json "$SYNTH_JSON"
   --lpf "$CONSTRAINT_FILE"
   --textcfg "$BUILD_DIR/${TOP_MODULE}_out.config"
-  --json "$ROUTED_JSON"
+  --write "$ROUTED_JSON"
   --threads $NUM_THREADS
   --fast-expr
   --log "$LOG_DIR/pnr.log"
