@@ -74,11 +74,8 @@ YOSYS_SCRIPT="$BUILD_DIR/synth.ys"
     echo "read_verilog -sv $file"
   done
   echo "hierarchy -check -top $TOP_MODULE"
-  echo "# Set ABC parameters for multi-threading"
-  echo "plugin -i design"
-  echo "plugin -i abc"
-  echo "abc -D $NUM_THREADS"
-  echo "synth_ecp5 -json $SYNTH_JSON"
+  echo "# Use multi-threading with ABC"
+  echo "synth_ecp5 -abc9 -abc9-climits -threads $NUM_THREADS -json $SYNTH_JSON"
 } > "$YOSYS_SCRIPT"
 
 echo "[synth] Starting Yosys..."
