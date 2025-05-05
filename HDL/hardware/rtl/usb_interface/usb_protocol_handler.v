@@ -91,7 +91,7 @@ module usb_protocol_handler (
     reg [15:0] crc16;                // CRC16 register
     reg [4:0]  crc5;                 // CRC5 register
     reg [2:0]  byte_cnt;             // Byte counter
-    reg [7:0]  tx_data_buffer [15:0];// Transmit data buffer
+    (* ram_style = "distributed", mem_init = "0" *) reg [7:0] tx_data_buffer [15:0];// Transmit data buffer
     reg [3:0]  tx_byte_cnt;          // Transmit byte counter
     reg [3:0]  tx_length;            // Transmit length
     

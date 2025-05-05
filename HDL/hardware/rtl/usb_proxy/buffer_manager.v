@@ -70,8 +70,8 @@ module buffer_manager (
     
     // Buffer memory (implemented as dual-port BRAM)
     // Split into two separate memories with explicit RAM synthesis attributes
-    (* ram_style = "block" *) reg [7:0] buffer_mem_host [0:BUFFER_SIZE_PER_DIR-1];
-    (* ram_style = "block" *) reg [7:0] buffer_mem_device [0:BUFFER_SIZE_PER_DIR-1];
+    (* ram_style = "block", mem_init = "0" *) reg [7:0] buffer_mem_host [0:BUFFER_SIZE_PER_DIR-1];
+    (* ram_style = "block", mem_init = "0" *) reg [7:0] buffer_mem_device [0:BUFFER_SIZE_PER_DIR-1];
     
     // Write control
     reg [ADDR_WIDTH-1:0] write_ptr;     // Write pointer

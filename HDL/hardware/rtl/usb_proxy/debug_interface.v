@@ -63,7 +63,7 @@ module debug_interface (
     localparam CMD_VERSION            = 8'hF0;  // Get version information
     
     // Response buffer
-    reg [7:0] response_buffer [15:0];
+    (* ram_style = "distributed", mem_init = "0" *) reg [7:0] response_buffer [15:0];
     reg [3:0] response_length;
     reg [3:0] response_index;
     reg       sending_response;

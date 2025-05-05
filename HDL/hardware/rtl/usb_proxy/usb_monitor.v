@@ -93,7 +93,7 @@ module usb_monitor (
     localparam DIR_DEVICE_TO_HOST = 1'b1;
     
     // Packet buffer and state
-    reg [7:0]  monitor_packet_buffer [255:0]; // Buffer for packet modification
+    (* ram_style = "distributed", mem_init = "0" *) reg [7:0] monitor_packet_buffer [255:0]; // Buffer for packet modification
     reg [7:0]  packet_length;        // Current packet length
     reg [3:0]  packet_pid;           // Current packet PID
     reg        packet_dir;           // Current packet direction
