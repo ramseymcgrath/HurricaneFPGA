@@ -93,7 +93,7 @@ module usb_monitor (
     localparam DIR_DEVICE_TO_HOST = 1'b1;
     
     // Packet buffer and state
-    reg [7:0]  packet_buffer [255:0]; // Buffer for packet modification
+    reg [7:0]  monitor_packet_buffer [255:0]; // Buffer for packet modification
     reg [7:0]  packet_length;        // Current packet length
     reg [3:0]  packet_pid;           // Current packet PID
     reg        packet_dir;           // Current packet direction
@@ -130,8 +130,8 @@ module usb_monitor (
     reg [15:0] error_count;          // Error counter
     
     // Host to device packet routing
-    assign device_tx_data = (packet_filter_en && packet_modified) ? 
-                           packet_buffer[byte_counter] : host_rx_data;
+    assign device_tx_data = (packet_filter_en && packet_modified) ?
+                           monitor_packet_buffer[byte_counter] : host_rx_data;
     assign device_tx_valid = (state == ST_HOST_TO_DEVICE) ? host_rx_valid : 1'b0;
     assign device_tx_sop = (state == ST_HOST_TO_DEVICE) ? host_rx_sop : 1'b0;
     assign device_tx_eop = (state == ST_HOST_TO_DEVICE) ? host_rx_eop : 1'b0;
@@ -140,8 +140,8 @@ module usb_monitor (
                            host_rx_pid : packet_pid) : host_rx_pid;
     
     // Device to host packet routing
-    assign host_tx_data = (packet_filter_en && packet_modified) ? 
-                         packet_buffer[byte_counter] : device_rx_data;
+    assign host_tx_data = (packet_filter_en && packet_modified) ?
+                         monitor_packet_buffer[byte_counter] : device_rx_data;
     assign host_tx_valid = (state == ST_DEVICE_TO_HOST) ? device_rx_valid : 1'b0;
     assign host_tx_sop = (state == ST_DEVICE_TO_HOST) ? device_rx_sop : 1'b0;
     assign host_tx_eop = (state == ST_DEVICE_TO_HOST) ? device_rx_eop : 1'b0;
@@ -310,7 +310,7 @@ module usb_monitor (
                     if (packet_dir == DIR_HOST_TO_DEVICE) begin
                         if (host_rx_valid) begin
                             // Store packet in buffer
-                            packet_buffer[byte_counter] <= host_rx_data;
+                            monitor_packet_buffer[byte_counter] <= host_rx_data;
                             byte_counter <= byte_counter + 1'b1;
                         end
                         
@@ -329,7 +329,7 @@ module usb_monitor (
                         // Device to host filtering
                         if (device_rx_valid) begin
                             // Store packet in buffer
-                            packet_buffer[byte_counter] <= device_rx_data;
+                            monitor_packet_buffer[byte_counter] <= device_rx_data;
                             byte_counter <= byte_counter + 1'b1;
                         end
                         
@@ -354,8 +354,8 @@ module usb_monitor (
                     // Address translation if enabled
                     if (addr_translate_en && 
                         (packet_pid == PID_IN || packet_pid == PID_OUT || packet_pid == PID_SETUP)) begin
-                        if (packet_buffer[1][6:0] == addr_translate_from) begin
-                            packet_buffer[1][6:0] <= addr_translate_to;
+                        if (monitor_packet_buffer[1][6:0] == addr_translate_from) begin
+                            monitor_packet_buffer[1][6:0] <= addr_translate_to;
                         end
                     end
                     
@@ -374,7 +374,7 @@ module usb_monitor (
                     // Store packet in buffer with modification flag
                     if (buffer_ready) begin
                         buffer_valid <= 1'b1;
-                        buffer_data <= packet_buffer[byte_counter];
+                        buffer_data <= monitor_packet_buffer[byte_counter];
                         buffer_flags <= {2'b00, 1'b1, packet_pid, packet_dir}; // Modified flag set
                         
                         byte_counter <= byte_counter + 1'b1;
