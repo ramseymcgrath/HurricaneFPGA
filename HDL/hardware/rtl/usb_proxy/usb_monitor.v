@@ -63,7 +63,8 @@ module usb_monitor (
     input  wire [7:0]  control_reg_data,  // Control register data
     input  wire        control_reg_write, // Control register write
     output reg  [7:0]  status_register,   // Status register
-    
+    output reg  [7:0]  status_read_data,  // Readback data
+
     // Configuration Registers
     input  wire        proxy_enable,      // Enable transparent proxy
     input  wire        packet_filter_en,  // Enable packet filtering
@@ -88,6 +89,9 @@ module usb_monitor (
     localparam PID_NYET  = 4'b0110;
     localparam PID_SOF   = 4'b0101;
     
+    // Status register address
+    localparam STATUS_REG_ADDR = 8'h00;
+    
     // Packet direction flags
     localparam DIR_HOST_TO_DEVICE = 1'b0;
     localparam DIR_DEVICE_TO_HOST = 1'b1;
@@ -95,8 +99,24 @@ module usb_monitor (
     // Packet buffer and state
     (* ram_style = "distributed", mem_init = "0" *) reg [7:0] monitor_packet_buffer [255:0]; // Buffer for packet modification
     reg [7:0]  packet_length;        // Current packet length
-    reg [3:0]  packet_pid;           // Current packet PID
+    reg [3:0]  last_host_pid;        // Last host PID (4-bit PID)
+    reg [3:0]  last_device_pid;      // Last device PID (4-bit PID)
+    reg [3:0]  latched_host_pid;     // Host PID saved for state transitions
+    reg [3:0]  latched_device_pid;   // Device PID saved for state transitions
+    reg        pending_dir;          // Direction flag for deferred routing
+    reg        buffer_write_en;      // Buffer write enable
     reg        packet_dir;           // Current packet direction
+    reg [3:0]  modify_pid;           // PID for modification
+    reg        fifo_full;            // FIFO full flag
+
+    // Endpoint index combines direction and endpoint number (5-bit: 1b dir + 4b endp)
+    wire [4:0] endpoint_index;
+    wire       index_valid;
+    wire       index_overflow;
+    
+    assign endpoint_index = {packet_dir, host_rx_endp};
+    assign index_valid = (host_rx_endp <= 4'hF); // USB spec allows max 15 endpoints
+    assign index_overflow = (endpoint_index >= 5'd16); // Protect 32-entry data_toggle array
     
     // FSM states
     localparam ST_IDLE               = 4'd0;
@@ -106,6 +126,8 @@ module usb_monitor (
     localparam ST_WAIT_HOST_RESP     = 4'd4;
     localparam ST_FILTER_PACKET      = 4'd5;
     localparam ST_MODIFY_PACKET      = 4'd6;
+    localparam ST_ROUTE_PACKET       = 4'd9; // Post-modification routing
+    localparam ST_BUFFER_VALIDATE    = 4'd10; // Buffer validation state
     localparam ST_BUFFER_PACKET      = 4'd7;
     localparam ST_HANDLE_SOF         = 4'd8;
     
@@ -115,8 +137,19 @@ module usb_monitor (
     reg [15:0] last_frame_num;       // Last SOF frame number
     
     // Per-endpoint toggle tracking (16 endpoints max, IN and OUT directions)
-    reg [31:0] data_toggle;          // Toggle bits (2 bits per endpoint/direction)
+    reg [31:0] data_toggle;          // Toggle bits (1 bit per endpoint/direction)
     
+    // Helper function for address byte index
+    function automatic [7:0] get_address_byte_index;
+        input [3:0] pid;
+        begin
+            case (pid)
+                PID_SETUP, PID_OUT, PID_IN: get_address_byte_index = 8'd1;  // Address at byte 1
+                default: get_address_byte_index = 8'd0;                     // Default to byte 0
+            endcase
+        end
+    endfunction
+
     // Modification tracking
     reg        packet_modified;      // Flag if packet has been modified
     
@@ -135,9 +168,9 @@ module usb_monitor (
     assign device_tx_valid = (state == ST_HOST_TO_DEVICE) ? host_rx_valid : 1'b0;
     assign device_tx_sop = (state == ST_HOST_TO_DEVICE) ? host_rx_sop : 1'b0;
     assign device_tx_eop = (state == ST_HOST_TO_DEVICE) ? host_rx_eop : 1'b0;
-    assign device_tx_pid = (packet_modified && addr_translate_en) ? 
+    assign device_tx_pid = (packet_modified && addr_translate_en) ?
                           ((host_rx_pid == PID_SETUP || host_rx_pid == PID_OUT || host_rx_pid == PID_IN) ?
-                           host_rx_pid : packet_pid) : host_rx_pid;
+                           host_rx_pid : last_host_pid) : host_rx_pid;
     
     // Device to host packet routing
     assign host_tx_data = (packet_filter_en && packet_modified) ?
@@ -145,14 +178,13 @@ module usb_monitor (
     assign host_tx_valid = (state == ST_DEVICE_TO_HOST) ? device_rx_valid : 1'b0;
     assign host_tx_sop = (state == ST_DEVICE_TO_HOST) ? device_rx_sop : 1'b0;
     assign host_tx_eop = (state == ST_DEVICE_TO_HOST) ? device_rx_eop : 1'b0;
-    assign host_tx_pid = (packet_modified) ? packet_pid : device_rx_pid;
+    assign host_tx_pid = (packet_modified) ? last_device_pid : device_rx_pid;
 
     // Main proxy state machine
-    always @(posedge clk or negedge rst_n) begin
+    always @(posedge clk or negedge rst_n) begin : main_state_machine
         if (!rst_n) begin
             state <= ST_IDLE;
             packet_length <= 8'd0;
-            packet_pid <= 4'd0;
             packet_dir <= DIR_HOST_TO_DEVICE;
             packet_modified <= 1'b0;
             byte_counter <= 8'd0;
@@ -160,6 +192,8 @@ module usb_monitor (
             last_frame_num <= 16'd0;
             data_toggle <= 32'd0;
             device_connected <= 1'b0;
+            // Reset newly added signals
+            pending_dir <= 1'b0;
             device_speed <= 2'b00;
             host_packets <= 32'd0;
             device_packets <= 32'd0;
@@ -169,6 +203,8 @@ module usb_monitor (
             buffer_data <= 8'h00;
             buffer_flags <= 8'h00;
             buffer_timestamp <= 64'h0;
+            fifo_full <= 1'b0;
+            modify_pid <= 4'h0;
         end else begin
             // Default assignments
             buffer_valid <= 1'b0;
@@ -181,7 +217,8 @@ module usb_monitor (
                     // Check for host->device transaction
                     if (proxy_enable && host_rx_sop && host_rx_valid) begin
                         state <= ST_HOST_TO_DEVICE;
-                        packet_pid <= host_rx_pid;
+                        last_host_pid <= host_rx_pid;
+                        latched_host_pid <= host_rx_pid;  // Capture for state transitions
                         packet_dir <= DIR_HOST_TO_DEVICE;
                         host_packets <= host_packets + 1'b1;
                         
@@ -202,7 +239,8 @@ module usb_monitor (
                     // Check for device->host transaction
                     else if (proxy_enable && device_rx_sop && device_rx_valid) begin
                         state <= ST_DEVICE_TO_HOST;
-                        packet_pid <= device_rx_pid;
+                        last_device_pid <= device_rx_pid;
+                        latched_device_pid <= device_rx_pid;  // Capture for state transitions
                         packet_dir <= DIR_DEVICE_TO_HOST;
                         device_packets <= device_packets + 1'b1;
                         
@@ -232,10 +270,11 @@ module usb_monitor (
                         if (buffer_ready && !buffer_valid) begin
                             buffer_data <= host_rx_data;
                             buffer_valid <= 1'b1;
-                            buffer_flags <= {3'b000, packet_pid, DIR_HOST_TO_DEVICE};
+                            buffer_flags <= {3'b000, last_host_pid, DIR_HOST_TO_DEVICE};
                         end
                         
-                        byte_counter <= byte_counter + 1'b1;
+                        buffer_write_en <= (state == ST_BUFFER_PACKET) && (byte_counter < 8'hFF);
+                        byte_counter <= (byte_counter == 8'hFF) ? 8'hFF : byte_counter + 1'b1;
                     end
                     
                     if (host_rx_eop) begin
@@ -248,16 +287,19 @@ module usb_monitor (
                     // Wait for device response
                     if (device_rx_sop && device_rx_valid) begin
                         state <= ST_DEVICE_TO_HOST;
-                        packet_pid <= device_rx_pid;
                         device_packets <= device_packets + 1'b1;
                         
-                        // Update data toggle if DATA packet
-                        if (host_rx_pid == PID_DATA0 || host_rx_pid == PID_DATA1) begin
+                        // Update data toggle if DATA packet using latched host PID
+                        if (latched_host_pid == PID_DATA0 || latched_host_pid == PID_DATA1) begin
                             if (device_rx_pid == PID_ACK) begin
-                                // On ACK, toggle the DATA toggle bit
-                                if (packet_pid == PID_OUT || packet_pid == PID_SETUP) begin
+                                // On ACK, toggle using original host PID
+                                if (latched_host_pid == PID_OUT || latched_host_pid == PID_SETUP) begin
                                     // Toggle for OUT/SETUP to this endpoint
-                                    data_toggle[{1'b0, host_rx_endp}] <= ~data_toggle[{1'b0, host_rx_endp}];
+                                    if (index_valid && !index_overflow) begin
+                                        data_toggle[endpoint_index] <= ~data_toggle[endpoint_index];
+                                    end else if (index_overflow) begin
+                                        status_register[5] <= 1'b1; // Set index error flag
+                                    end
                                 end
                             end
                         end
@@ -276,10 +318,17 @@ module usb_monitor (
                         if (buffer_ready && !buffer_valid) begin
                             buffer_data <= device_rx_data;
                             buffer_valid <= 1'b1;
-                            buffer_flags <= {3'b000, packet_pid, DIR_DEVICE_TO_HOST};
+                            buffer_flags <= {3'b000, last_device_pid, DIR_DEVICE_TO_HOST};
+                            last_device_pid <= device_rx_pid;  // Track device-side PID
+                            buffer_write_en <= 1'b1;  // Enable buffer write
                         end
                         
-                        byte_counter <= byte_counter + 1'b1;
+                        if (byte_counter < 8'hFF) begin
+                            byte_counter <= byte_counter + 1'b1;
+                        end else begin
+                            byte_counter <= 8'hFF;
+                            status_register[7] <= 1'b1; // Set overflow flag
+                        end
                     end
                     
                     if (device_rx_eop) begin
@@ -288,9 +337,11 @@ module usb_monitor (
                         
                         // Update data toggle if DATA packet
                         if (device_rx_pid == PID_DATA0 || device_rx_pid == PID_DATA1) begin
-                            // Toggle for IN to this endpoint on successful transmission
-                            if (host_rx_pid == PID_IN) begin
-                                data_toggle[{1'b1, host_rx_endp}] <= ~data_toggle[{1'b1, host_rx_endp}];
+                            // Use direction-aware endpoint index
+                            if (last_device_pid == PID_IN && !index_overflow) begin
+                                data_toggle[endpoint_index] <= ~data_toggle[endpoint_index];
+                            end else if (index_overflow) begin
+                                status_register[5] <= 1'b1; // Set index error flag
                             end
                         end
                     end
@@ -300,6 +351,8 @@ module usb_monitor (
                     // Wait for host response or go back to idle
                     if (host_rx_sop || (byte_counter > 8'd200)) begin
                         state <= ST_IDLE;
+                        // Store host PID before transition
+                        last_host_pid <= host_rx_pid;
                     end else begin
                         byte_counter <= byte_counter + 1'b1;
                     end
@@ -308,29 +361,41 @@ module usb_monitor (
                 ST_FILTER_PACKET: begin
                     // Packet filtering logic
                     if (packet_dir == DIR_HOST_TO_DEVICE) begin
-                        if (host_rx_valid) begin
-                            // Store packet in buffer
-                            monitor_packet_buffer[byte_counter] <= host_rx_data;
-                            byte_counter <= byte_counter + 1'b1;
+                        // Host to device filtering
+                        // Generate write enable only for valid data cycles
+                        buffer_write_en <= host_rx_valid && buffer_ready && !fifo_full;
+                        
+                        if (buffer_write_en) begin
+                            // Store packet in buffer only when ready
+                            if (byte_counter < 8'hFF) begin
+                                // Special handling for address byte
+                                if (byte_counter == 1) begin // Address byte index
+                                    monitor_packet_buffer[1][6:0] <=
+                                        (host_rx_data[6:0] == addr_translate_from) ?
+                                        addr_translate_to : host_rx_data[6:0];
+                                end else begin
+                                    monitor_packet_buffer[byte_counter] <= host_rx_data;
+                                end
+                                // Clamp counter at max value
+                                byte_counter <= (byte_counter == 8'hFF) ? 8'hFF : byte_counter + 1'b1;
+                            end
                         end
                         
                         if (host_rx_eop) begin
-                            packet_length <= byte_counter + 1'b1;
+                            packet_length <= (byte_counter == 8'hFF) ? 8'hFF : byte_counter + 1'b1;
                             byte_counter <= 8'd0;
                             
-                            // Decide if we need to modify the packet
-                            if (modify_enable) begin
-                                state <= ST_MODIFY_PACKET;
-                            end else begin
-                                state <= ST_HOST_TO_DEVICE;
-                            end
+                            // Buffer before routing
+                            state <= ST_BUFFER_PACKET;
                         end
                     end else begin
                         // Device to host filtering
-                        if (device_rx_valid) begin
-                            // Store packet in buffer
-                            monitor_packet_buffer[byte_counter] <= device_rx_data;
-                            byte_counter <= byte_counter + 1'b1;
+                        if (device_rx_valid && buffer_write_en && buffer_ready) begin
+                            if (byte_counter < 8'hFF) begin
+                               monitor_packet_buffer[byte_counter] <= device_rx_data;
+                               buffer_write_en <= 1'b0;  // Clear after write
+                               byte_counter <= byte_counter + 1'b1;
+                            end
                         end
                         
                         if (device_rx_eop) begin
@@ -348,26 +413,46 @@ module usb_monitor (
                 end
                 
                 ST_MODIFY_PACKET: begin
-                    // Packet modification logic
+                    // Packet modification logic using direction-specific PIDs
                     packet_modified <= 1'b1;
-                    
+
+                    // Buffer before routing
+                    state <= ST_BUFFER_PACKET;
+                    pending_dir <= packet_dir;
+
+                    // Gate buffer writes with valid flag
+                    buffer_valid <= (byte_counter < packet_length);
+
                     // Address translation if enabled
-                    if (addr_translate_en && 
-                        (packet_pid == PID_IN || packet_pid == PID_OUT || packet_pid == PID_SETUP)) begin
-                        if (monitor_packet_buffer[1][6:0] == addr_translate_from) begin
-                            monitor_packet_buffer[1][6:0] <= addr_translate_to;
+                    if (addr_translate_en) begin
+                        modify_pid <= (packet_dir == DIR_HOST_TO_DEVICE) ? 
+                                      latched_host_pid : latched_device_pid;
+                                      
+                        // Check if the PID is one we should modify address for
+                        if ((modify_pid == PID_IN) || (modify_pid == PID_OUT) || (modify_pid == PID_SETUP)) begin
+                            // Get address byte index using PID type
+                            if (get_address_byte_index(modify_pid) > 0 && 
+                                get_address_byte_index(modify_pid) <= packet_length) begin
+                                
+                                // Perform the address translation if address matches
+                                if (monitor_packet_buffer[1][6:0] == addr_translate_from) begin
+                                    monitor_packet_buffer[1][6:0] <= addr_translate_to;
+                                end
+                            end
                         end
                     end
-                    
-                    // Route packet after modification
-                    if (packet_dir == DIR_HOST_TO_DEVICE) begin
-                        state <= ST_HOST_TO_DEVICE;
-                    end else begin
-                        state <= ST_DEVICE_TO_HOST;
+
+                    // State transition logic
+                    if (byte_counter == packet_length) begin
+                        state <= ST_BUFFER_VALIDATE;
+                        pending_dir <= packet_dir;
+                    end else if (byte_counter > 8'hFF) begin
+                        status_register[7] <= 1'b1; // Set buffer overflow flag
+                        status_register[6] <= (byte_counter == 8'hFF) ? 1'b1 : 1'b0; // Set max length flag
+                        state <= ST_IDLE;
                     end
-                    
-                    // Log modified packet
-                    state <= ST_BUFFER_PACKET;
+                    // Reset byte counter for buffer write
+                    byte_counter <= 8'd0;
                 end
                 
                 ST_BUFFER_PACKET: begin
@@ -375,11 +460,11 @@ module usb_monitor (
                     if (buffer_ready) begin
                         buffer_valid <= 1'b1;
                         buffer_data <= monitor_packet_buffer[byte_counter];
-                        buffer_flags <= {2'b00, 1'b1, packet_pid, packet_dir}; // Modified flag set
+                        buffer_flags <= {2'b00, 1'b1, modify_pid, packet_dir};
                         
                         byte_counter <= byte_counter + 1'b1;
                         if (byte_counter >= packet_length - 1) begin
-                            if (packet_dir == DIR_HOST_TO_DEVICE) begin
+                            if (pending_dir == DIR_HOST_TO_DEVICE) begin
                                 state <= ST_HOST_TO_DEVICE;
                             end else begin
                                 state <= ST_DEVICE_TO_HOST;
@@ -387,6 +472,21 @@ module usb_monitor (
                             byte_counter <= 8'd0;
                         end
                     end
+                end
+                
+                ST_BUFFER_VALIDATE: begin
+                    // Validate buffer contents
+                    state <= ST_ROUTE_PACKET;
+                end
+                
+                ST_ROUTE_PACKET: begin
+                    // Route the modified packet
+                    if (pending_dir == DIR_HOST_TO_DEVICE) begin
+                        state <= ST_HOST_TO_DEVICE;
+                    end else begin
+                        state <= ST_DEVICE_TO_HOST;
+                    end
+                    byte_counter <= 8'd0;
                 end
                 
                 ST_HANDLE_SOF: begin
@@ -421,9 +521,42 @@ module usb_monitor (
             status_register[2] <= proxy_enable;
             status_register[3] <= packet_filter_en;
             status_register[4] <= modify_enable;
-            status_register[5] <= addr_translate_en;
+            status_register[5] <= addr_translate_en[0];
             status_register[7:6] <= device_speed;
         end
+    end
+
+    // Status register readback - consolidated into a single case statement
+    always @(*) begin
+        case (control_reg_addr)
+            // Status registers
+            8'h00: status_read_data = status_register;
+            8'h01: status_read_data = error_count[7:0];
+            8'h02: status_read_data = error_count[15:8];
+            8'h03: status_read_data = host_packets[7:0];
+            8'h04: status_read_data = host_packets[15:8];
+            8'h05: status_read_data = host_packets[23:16];
+            8'h06: status_read_data = host_packets[31:24];
+            8'h07: status_read_data = device_packets[7:0];
+            8'h08: status_read_data = device_packets[15:8];
+            8'h09: status_read_data = device_packets[23:16];
+            8'h0A: status_read_data = device_packets[31:24];
+            
+            // Debug registers
+            8'h10: status_read_data = {4'h0, last_host_pid};
+            8'h11: status_read_data = {4'h0, last_device_pid};
+            8'h12: status_read_data = byte_counter;
+            8'h13: status_read_data = {6'b0, device_speed};
+            8'h14: status_read_data = {7'b0, device_connected};
+            
+            // Control register mirroring
+            8'hF0: status_read_data = addr_translate_en;
+            8'hF1: status_read_data = addr_translate_from;
+            8'hF2: status_read_data = addr_translate_to;
+            8'hF3: status_read_data = {proxy_enable, packet_filter_en, modify_enable, 5'b0};
+            
+            default: status_read_data = 8'h00;
+        endcase
     end
     
     // Connection speed detection
@@ -438,6 +571,13 @@ module usb_monitor (
                 8'h03: device_speed <= 2'b00; // Low-speed event detected
                 default: ; // No change
             endcase
+        end
+    end
+
+    // Add overflow detection for byte counter
+    always @(posedge clk) begin
+        if (byte_counter == 8'hFF) begin
+            status_register[5] <= 1'b1; // Overflow warning flag
         end
     end
 
