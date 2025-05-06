@@ -91,7 +91,9 @@ module usb_protocol_handler (
     reg [15:0] crc16;                // CRC16 register
     reg [4:0]  crc5;                 // CRC5 register
     reg [2:0]  byte_cnt;             // Byte counter
-    (* ram_style = "distributed", mem_init = "0" *) reg [7:0] tx_data_buffer [15:0];// Transmit data buffer
+    (* ram_style = "block", mem_init = "0" *) reg [7:0] tx_data_buffer [15:0]; // Block RAM for transmit buffer
+    reg tx_wr_en;                    // Memory write enable
+    reg [3:0] tx_wr_addr;            // Memory write address
     reg [3:0]  tx_byte_cnt;          // Transmit byte counter
     reg [3:0]  tx_length;            // Transmit length
     
@@ -370,12 +372,17 @@ module usb_protocol_handler (
                     end
                 end
                 
+                // Block RAM write control
                 ST_TX_DATA: begin
                     if (utmi_tx_ready) begin
+                        // Synchronous write operation
+                        if (tx_packet_valid) begin
+                            tx_data_buffer[tx_byte_cnt] <= tx_packet_data;
+                        end
                         if (tx_packet_valid) begin
                             utmi_tx_data <= tx_packet_data;
                             utmi_tx_valid <= 1'b1;
-                            tx_data_buffer[tx_byte_cnt] <= tx_packet_data;
+                            // Update read address and counter
                             tx_byte_cnt <= tx_byte_cnt + 1'b1;
                             
                             if (tx_packet_eop) begin

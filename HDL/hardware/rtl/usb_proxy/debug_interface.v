@@ -62,11 +62,14 @@ module debug_interface (
     localparam CMD_TRIGGER_CONFIG     = 8'h22;  // Configure trigger
     localparam CMD_VERSION            = 8'hF0;  // Get version information
     
-    // Response buffer
-    (* ram_style = "distributed", mem_init = "0" *) reg [7:0] response_buffer [15:0];
+    // Response buffer (dual-port RAM implementation)
+    (* ram_style = "block", mem_init = "0" *) reg [7:0] response_buffer [0:15];
     reg [3:0] response_length;
     reg [3:0] response_index;
     reg       sending_response;
+    reg       buffer_write_en;
+    reg [3:0] write_address;
+    reg [7:0] write_data;
     
     // Version information
     localparam VERSION_MAJOR = 8'h01;
@@ -93,24 +96,33 @@ module debug_interface (
             force_reset <= 1'b0;  // Auto-clear reset signal
             
             // Command processing
+            // Buffer write control
+            buffer_write_en <= 1'b0;
             if (debug_cmd_valid) begin
-                response_index <= 4'h0;
-                sending_response <= 1'b1;
-                
-                case (debug_cmd)
-                    CMD_NOP: begin
-                        // No operation
-                        response_length <= 4'h1;
-                        response_buffer[0] <= CMD_NOP;
+               response_index <= 4'h0;
+               sending_response <= 1'b1;
+               write_address <= 4'h0;
+               
+               case (debug_cmd)
+                   CMD_NOP: begin
+                       // No operation
+                       response_length <= 4'h1;
+                       write_data <= CMD_NOP;
+                       buffer_write_en <= 1'b1;
                     end
                     
                     CMD_GET_STATUS: begin
                         // Return system status
                         response_length <= 4'h4;
-                        response_buffer[0] <= CMD_GET_STATUS;
-                        response_buffer[1] <= {4'b0000, proxy_active, host_connected, device_connected, 1'b0};
-                        response_buffer[2] <= {4'b0000, host_speed, device_speed};
-                        response_buffer[3] <= {7'b0000000, buffer_overflow};
+                        write_data <= CMD_GET_STATUS;
+                        buffer_write_en <= 1'b1;
+                        response_buffer[write_address] <= write_data;
+                        write_address <= write_address + 1;
+                        response_buffer[write_address] <= {4'b0000, proxy_active, host_connected, device_connected, 1'b0};
+                        write_address <= write_address + 1;
+                        response_buffer[write_address] <= {4'b0000, host_speed, device_speed};
+                        write_address <= write_address + 1;
+                        response_buffer[write_address] <= {7'b0000000, buffer_overflow};
                     end
                     
                     CMD_GET_BUFFER_STATUS: begin
@@ -221,10 +233,15 @@ module debug_interface (
                 endcase
             end
             
-            // Response handling
+            // Registered buffer writes
+            if (buffer_write_en) begin
+                response_buffer[write_address] <= write_data;
+            end
+            
+            // Response handling with registered output
             if (sending_response) begin
                 if (response_index < response_length) begin
-                    // Send next byte of response
+                    // Send next byte of response with pipeline register
                     debug_resp <= response_buffer[response_index];
                     debug_resp_valid <= 1'b1;
                     response_index <= response_index + 1'b1;
@@ -237,34 +254,5 @@ module debug_interface (
         end
     end
 
-    // Debug mode logic
-    always @(posedge clk) begin
-        // Debug mode functionality could be expanded here
-        // For now, just use the mode selection for different LED display patterns
-        case (debug_mode)
-            2'b00: begin
-                // Normal mode - LEDs as configured
-            end
-            
-            2'b01: begin
-                // Line state mode - display line states on lower 4 LEDs
-                debug_leds[3:0] <= {device_line_state, host_line_state};
-            end
-            
-            2'b10: begin
-                // Activity mode - flash LEDs on packet activity
-                if (packet_count != 0) begin
-                    debug_leds[7] <= ~debug_leds[7];  // Toggle with packets
-                end
-            end
-            
-            2'b11: begin
-                // Error mode - indicate errors
-                if (error_count != 0) begin
-                    debug_leds <= 8'hAA;  // Alternating pattern to indicate errors
-                end
-            end
-        endcase
-    end
 
 endmodule
