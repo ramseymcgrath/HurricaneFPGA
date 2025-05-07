@@ -109,87 +109,176 @@ module debug_interface (
                        response_length <= 4'h1;
                        write_data <= CMD_NOP;
                        buffer_write_en <= 1'b1;
+                       response_buffer[0] <= write_data;  // Explicit single write
                     end
                     
                     CMD_GET_STATUS: begin
-                        // Return system status
+                        // Return system status - single atomic write
                         response_length <= 4'h4;
                         write_data <= CMD_GET_STATUS;
                         buffer_write_en <= 1'b1;
-                        response_buffer[write_address] <= write_data;
-                        write_address <= write_address + 1;
-                        response_buffer[write_address] <= {4'b0000, proxy_active, host_connected, device_connected, 1'b0};
-                        write_address <= write_address + 1;
-                        response_buffer[write_address] <= {4'b0000, host_speed, device_speed};
-                        write_address <= write_address + 1;
-                        response_buffer[write_address] <= {7'b0000000, buffer_overflow};
+                        response_buffer[write_address] <= {
+                            write_data,
+                            {4'b0000, proxy_active, host_connected, device_connected, 1'b0},
+                            {4'b0000, host_speed, device_speed},
+                            {7'b0000000, buffer_overflow}
+                        };
+                        write_address <= write_address + 1;  // Single address increment
                     end
                     
                     CMD_GET_BUFFER_STATUS: begin
                         // Return buffer status
                         response_length <= 4'h3;
-                        response_buffer[0] <= CMD_GET_BUFFER_STATUS;
-                        response_buffer[1] <= buffer_used[7:0];
-                        response_buffer[2] <= buffer_used[15:8];
+                        write_data <= CMD_GET_BUFFER_STATUS;
+                        buffer_write_en <= 1'b1;
+                        response_buffer[write_address] <= write_data;
+                        write_address <= write_address + 1;
+                        
+                        write_data <= buffer_used[7:0];
+                        buffer_write_en <= 1'b1;
+                        response_buffer[write_address] <= write_data;
+                        write_address <= write_address + 1;
+                        
+                        write_data <= buffer_used[15:8];
+                        buffer_write_en <= 1'b1;
+                        response_buffer[write_address] <= write_data;
+                        write_address <= write_address + 1;
                     end
                     
                     CMD_GET_PACKET_COUNT: begin
                         // Return packet count
                         response_length <= 4'h5;
-                        response_buffer[0] <= CMD_GET_PACKET_COUNT;
-                        response_buffer[1] <= packet_count[7:0];
-                        response_buffer[2] <= packet_count[15:8];
-                        response_buffer[3] <= packet_count[23:16];
-                        response_buffer[4] <= packet_count[31:24];
+                        write_data <= CMD_GET_PACKET_COUNT;
+                        buffer_write_en <= 1'b1;
+                        response_buffer[write_address] <= write_data;
+                        write_address <= write_address + 1;
+                        
+                        write_data <= packet_count[7:0];
+                        buffer_write_en <= 1'b1;
+                        response_buffer[write_address] <= write_data;
+                        write_address <= write_address + 1;
+                        
+                        write_data <= packet_count[15:8];
+                        buffer_write_en <= 1'b1;
+                        response_buffer[write_address] <= write_data;
+                        write_address <= write_address + 1;
+                        
+                        write_data <= packet_count[23:16];
+                        buffer_write_en <= 1'b1;
+                        response_buffer[write_address] <= write_data;
+                        write_address <= write_address + 1;
+                        
+                        write_data <= packet_count[31:24];
+                        buffer_write_en <= 1'b1;
+                        response_buffer[write_address] <= write_data;
+                        write_address <= write_address + 1;
                     end
                     
                     CMD_GET_ERROR_COUNT: begin
                         // Return error count
                         response_length <= 4'h3;
-                        response_buffer[0] <= CMD_GET_ERROR_COUNT;
-                        response_buffer[1] <= error_count[7:0];
-                        response_buffer[2] <= error_count[15:8];
+                        write_data <= CMD_GET_ERROR_COUNT;
+                        buffer_write_en <= 1'b1;
+                        response_buffer[write_address] <= write_data;
+                        write_address <= write_address + 1;
+                        
+                        write_data <= error_count[7:0];
+                        buffer_write_en <= 1'b1;
+                        response_buffer[write_address] <= write_data;
+                        write_address <= write_address + 1;
+                        
+                        write_data <= error_count[15:8];
+                        buffer_write_en <= 1'b1;
+                        response_buffer[write_address] <= write_data;
+                        write_address <= write_address + 1;
                     end
                     
                     CMD_GET_LINE_STATE: begin
                         // Return current line state
                         response_length <= 4'h2;
-                        response_buffer[0] <= CMD_GET_LINE_STATE;
-                        response_buffer[1] <= {4'b0000, device_line_state, host_line_state};
+                        write_data <= CMD_GET_LINE_STATE;
+                        buffer_write_en <= 1'b1;
+                        response_buffer[write_address] <= write_data;
+                        write_address <= write_address + 1;
+                        
+                        write_data <= {4'b0000, device_line_state, host_line_state};
+                        buffer_write_en <= 1'b1;
+                        response_buffer[write_address] <= write_data;
+                        write_address <= write_address + 1;
                     end
                     
                     CMD_GET_TIMESTAMP: begin
                         // Return current timestamp (lower 32 bits)
                         response_length <= 4'h5;
-                        response_buffer[0] <= CMD_GET_TIMESTAMP;
-                        response_buffer[1] <= timestamp[7:0];
-                        response_buffer[2] <= timestamp[15:8];
-                        response_buffer[3] <= timestamp[23:16];
-                        response_buffer[4] <= timestamp[31:24];
+                        write_data <= CMD_GET_TIMESTAMP;
+                        buffer_write_en <= 1'b1;
+                        response_buffer[write_address] <= write_data;
+                        write_address <= write_address + 1;
+                        
+                        write_data <= timestamp[7:0];
+                        buffer_write_en <= 1'b1;
+                        response_buffer[write_address] <= write_data;
+                        write_address <= write_address + 1;
+                        
+                        write_data <= timestamp[15:8];
+                        buffer_write_en <= 1'b1;
+                        response_buffer[write_address] <= write_data;
+                        write_address <= write_address + 1;
+                        
+                        write_data <= timestamp[23:16];
+                        buffer_write_en <= 1'b1;
+                        response_buffer[write_address] <= write_data;
+                        write_address <= write_address + 1;
+                        
+                        write_data <= timestamp[31:24];
+                        buffer_write_en <= 1'b1;
+                        response_buffer[write_address] <= write_data;
+                        write_address <= write_address + 1;
                     end
                     
                     CMD_SET_DEBUG_LEDS: begin
                         // Set debug LEDs
                         debug_leds <= debug_cmd[7:0];
                         response_length <= 4'h2;
-                        response_buffer[0] <= CMD_SET_DEBUG_LEDS;
-                        response_buffer[1] <= debug_cmd[7:0];
+                        write_data <= CMD_SET_DEBUG_LEDS;
+                        buffer_write_en <= 1'b1;
+                        response_buffer[write_address] <= write_data;
+                        write_address <= write_address + 1;
+                        
+                        write_data <= debug_cmd[7:0];
+                        buffer_write_en <= 1'b1;
+                        response_buffer[write_address] <= write_data;
+                        write_address <= write_address + 1;
                     end
                     
                     CMD_SET_DEBUG_PROBE: begin
                         // Set debug probe outputs
                         debug_probe <= debug_cmd[7:0];
                         response_length <= 4'h2;
-                        response_buffer[0] <= CMD_SET_DEBUG_PROBE;
-                        response_buffer[1] <= debug_cmd[7:0];
+                        write_data <= CMD_SET_DEBUG_PROBE;
+                        buffer_write_en <= 1'b1;
+                        response_buffer[write_address] <= write_data;
+                        write_address <= write_address + 1;
+                        
+                        write_data <= debug_cmd[7:0];
+                        buffer_write_en <= 1'b1;
+                        response_buffer[write_address] <= write_data;
+                        write_address <= write_address + 1;
                     end
                     
                     CMD_SET_DEBUG_MODE: begin
                         // Set debug mode
                         debug_mode <= debug_cmd[1:0];
                         response_length <= 4'h2;
-                        response_buffer[0] <= CMD_SET_DEBUG_MODE;
-                        response_buffer[1] <= {6'b000000, debug_cmd[1:0]};
+                        write_data <= CMD_SET_DEBUG_MODE;
+                        buffer_write_en <= 1'b1;
+                        response_buffer[write_address] <= write_data;
+                        write_address <= write_address + 1;
+                        
+                        write_data <= {6'b000000, debug_cmd[1:0]};
+                        buffer_write_en <= 1'b1;
+                        response_buffer[write_address] <= write_data;
+                        write_address <= write_address + 1;
                     end
                     
                     CMD_FORCE_RESET: begin
@@ -203,40 +292,72 @@ module debug_interface (
                         // Enable/disable loopback mode
                         loopback_enable <= debug_cmd[0];
                         response_length <= 4'h2;
-                        response_buffer[0] <= CMD_LOOPBACK_ENABLE;
-                        response_buffer[1] <= {7'b0000000, debug_cmd[0]};
+                        write_data <= CMD_LOOPBACK_ENABLE;
+                        buffer_write_en <= 1'b1;
+                        response_buffer[write_address] <= write_data;
+                        write_address <= write_address + 1;
+                        
+                        write_data <= {7'b0000000, debug_cmd[0]};
+                        buffer_write_en <= 1'b1;
+                        response_buffer[write_address] <= write_data;
+                        write_address <= write_address + 1;
                     end
                     
                     CMD_TRIGGER_CONFIG: begin
                         // Configure trigger
                         trigger_config <= debug_cmd[7:0];
                         response_length <= 4'h2;
-                        response_buffer[0] <= CMD_TRIGGER_CONFIG;
-                        response_buffer[1] <= debug_cmd[7:0];
+                        write_data <= CMD_TRIGGER_CONFIG;
+                        buffer_write_en <= 1'b1;
+                        response_buffer[write_address] <= write_data;
+                        write_address <= write_address + 1;
+                        
+                        write_data <= debug_cmd[7:0];
+                        buffer_write_en <= 1'b1;
+                        response_buffer[write_address] <= write_data;
+                        write_address <= write_address + 1;
                     end
                     
                     CMD_VERSION: begin
                         // Return version information
                         response_length <= 4'h4;
-                        response_buffer[0] <= CMD_VERSION;
-                        response_buffer[1] <= VERSION_MAJOR;
-                        response_buffer[2] <= VERSION_MINOR;
-                        response_buffer[3] <= VERSION_PATCH;
+                        write_data <= CMD_VERSION;
+                        buffer_write_en <= 1'b1;
+                        response_buffer[write_address] <= write_data;
+                        write_address <= write_address + 1;
+                        
+                        write_data <= VERSION_MAJOR;
+                        buffer_write_en <= 1'b1;
+                        response_buffer[write_address] <= write_data;
+                        write_address <= write_address + 1;
+                        
+                        write_data <= VERSION_MINOR;
+                        buffer_write_en <= 1'b1;
+                        response_buffer[write_address] <= write_data;
+                        write_address <= write_address + 1;
+                        
+                        write_data <= VERSION_PATCH;
+                        buffer_write_en <= 1'b1;
+                        response_buffer[write_address] <= write_data;
+                        write_address <= write_address + 1;
                     end
                     
                     default: begin
                         // Unknown command
                         response_length <= 4'h2;
-                        response_buffer[0] <= 8'hFF;  // Error response
-                        response_buffer[1] <= debug_cmd;  // Echo unknown command
+                        write_data <= 8'hFF;  // Error response
+                        buffer_write_en <= 1'b1;
+                        response_buffer[write_address] <= write_data;
+                        write_address <= write_address + 1;
+                        
+                        write_data <= debug_cmd;  // Echo unknown command
+                        buffer_write_en <= 1'b1;
+                        response_buffer[write_address] <= write_data;
+                        write_address <= write_address + 1;
                     end
                 endcase
             end
             
-            // Registered buffer writes
-            if (buffer_write_en) begin
-                response_buffer[write_address] <= write_data;
-            end
             
             // Response handling with registered output
             if (sending_response) begin

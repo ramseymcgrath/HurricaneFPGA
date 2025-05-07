@@ -101,7 +101,9 @@ module packet_proxy (
     // Internal Registers
     reg [3:0]  state;                      // Current FSM state
     reg [3:0]  next_state;                 // Next state for return after inspect
-    (* ram_style = "distributed", mem_init = "0" *) reg [7:0] packet_buffer [255:0];      // Buffer for packet inspection/modification
+    (* ram_style = "block", mem_init = "0" *) reg [7:0] packet_buffer [255:0];  // Block RAM for packet buffer
+    reg [7:0] buffer_write_addr;                // Registered write address
+    reg buffer_we;                              // Write enable register
     reg [7:0]  packet_length;              // Current packet length
     reg [7:0]  buffer_index;               // Current index in buffer
     reg        packet_direction;           // 0=Host to Device, 1=Device to Host

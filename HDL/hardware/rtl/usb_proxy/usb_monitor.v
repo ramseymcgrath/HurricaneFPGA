@@ -13,6 +13,7 @@ module usb_monitor (
     input  wire        clk,               // System clock (60MHz)
     input  wire        clk_120mhz,        // 120MHz clock for faster processing
     input  wire        rst_n,             // Active low reset
+    output reg         overflow_detected, // Buffer overflow indicator
 
     // Host Side USB Interface
     input  wire [7:0]  host_rx_data,      // Decoded data from host
@@ -161,6 +162,7 @@ module usb_monitor (
     reg [31:0] host_packets;         // Host packet counter
     reg [31:0] device_packets;       // Device packet counter
     reg [15:0] error_count;          // Error counter
+    reg        overflow_detected;    // Buffer overflow indicator
     
     // Host to device packet routing
     assign device_tx_data = (packet_filter_en && packet_modified) ?
@@ -511,7 +513,7 @@ module usb_monitor (
             endcase
             
             // Error detection
-            if ((host_rx_valid && !host_rx_crc_valid && host_rx_eop) || 
+            if ((host_rx_valid && !host_rx_crc_valid && host_rx_eop) ||
                 (device_rx_valid && !device_rx_crc_valid && device_rx_eop)) begin
                 error_count <= error_count + 1'b1;
                 status_register[1] <= 1'b1; // Error bit
@@ -521,7 +523,8 @@ module usb_monitor (
             status_register[2] <= proxy_enable;
             status_register[3] <= packet_filter_en;
             status_register[4] <= modify_enable;
-            status_register[5] <= addr_translate_en[0];
+            status_register[5] <= overflow_detected;  // Add overflow bit
+            status_register[6] <= addr_translate_en[0];
             status_register[7:6] <= device_speed;
         end
     end
@@ -550,7 +553,7 @@ module usb_monitor (
             8'h14: status_read_data = {7'b0, device_connected};
             
             // Control register mirroring
-            8'hF0: status_read_data = addr_translate_en;
+            8'hF0: status_read_data = {addr_translate_en[7:1], overflow_detected};
             8'hF1: status_read_data = addr_translate_from;
             8'hF2: status_read_data = addr_translate_to;
             8'hF3: status_read_data = {proxy_enable, packet_filter_en, modify_enable, 5'b0};
@@ -574,9 +577,13 @@ module usb_monitor (
         end
     end
 
-    // Add overflow detection for byte counter
-    always @(posedge clk) begin
-        if (byte_counter == 8'hFF) begin
+    // Byte counter overflow detection
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            overflow_detected <= 1'b0;
+            status_register[5] <= 1'b0;
+        end else if (byte_counter == 8'hFF) begin
+            overflow_detected <= 1'b1;
             status_register[5] <= 1'b1; // Overflow warning flag
         end
     end
