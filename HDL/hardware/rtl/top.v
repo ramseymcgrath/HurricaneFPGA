@@ -8,25 +8,27 @@
 // Target: Lattice ECP5 on Cynthion device
 ///////////////////////////////////////////////////////////////////////////////
 
-module top (
+module top #(
+    parameter DEBUG_OFF = 1'b0
+)(
     // Clock and Reset
     input  wire        clk_60mhz,       // 60MHz input clock
     input  wire        reset_n,         // Active low reset
     
     // USB PHY 0 - CONTROL (Internal MCU Access)
-    inout  wire        usb0_dp,         // USB D+ (bidirectional)
-    inout  wire        usb0_dn,         // USB D- (bidirectional)
+    inout              usb0_dp,         // USB D+ (bidirectional)
+    inout              usb0_dn,         // USB D- (bidirectional)
     output wire        usb0_pullup,     // USB pullup control
     
     // USB PHY 1 - TARGET A/C (Shared PHY)
-    inout  wire        usb1_dp,         // USB D+ (bidirectional)
-    inout  wire        usb1_dn,         // USB D- (bidirectional)
+    inout              usb1_dp,         // USB D+ (bidirectional)
+    inout              usb1_dn,         // USB D- (bidirectional)
     output wire        usb1_pullup,     // USB pullup control
     
     // USB PHY 2 - TARGET B (Dedicated)
-    inout  wire        usb2_dp,         // USB D+ (bidirectional)
-    inout  wire        usb2_dn,         // USB D- (bidirectional)
-    output wire        usb2_pullup,     // USB pullup control
+    inout              usb2_dp,         // USB D+ (bidirectional)
+    inout              usb2_dn,         // USB D- (bidirectional)
+    output wire        usb2_pullup      // USB pullup control
     
     // Status LEDs
     output wire [7:0]  led,             // Status LEDs
@@ -450,35 +452,34 @@ module top (
     end
 
     // Host TX valid mux for debug mode
-    // Debug mode synchronization and proxy control
-    // CDC synchronization with gray coding
-    typedef enum logic [1:0] {
+    // Debug state constants
+    localparam [1:0]
         DEBUG_OFF = 2'b00,
-        DEBUG_ON  = 2'b01
-    } debug_state_t;
-    
+        DEBUG_ON  = 2'b01;
+
     // 120MHz domain synchronization with proper CDC
-    debug_state_t debug_mode_cdc_sync1, debug_mode_cdc_sync2;
-    always_ff @(posedge clk_120mhz or negedge reset_120mhz) begin
+    reg [1:0] debug_mode_cdc_sync1, debug_mode_cdc_sync2;
+    always @(posedge clk_120mhz or negedge reset_120mhz) begin
         if (!reset_120mhz) begin
             debug_mode_cdc_sync1 <= DEBUG_OFF;
             debug_mode_cdc_sync2 <= DEBUG_OFF;
-        end else begin
-            debug_mode_cdc_sync1 <= debug_mode;
+        end
+        else begin
+            debug_mode_cdc_sync1 <= debug_mode_async;
             debug_mode_cdc_sync2 <= debug_mode_cdc_sync1;
         end
     end
 
     // Registered output for debug mode in 120MHz domain
-    debug_state_t debug_mode_cdc_120mhz;
-    always_ff @(posedge clk_120mhz) begin
+    reg [1:0] debug_mode_cdc_120mhz;
+    always @(posedge clk_120mhz) begin
         debug_mode_cdc_120mhz <= debug_mode_cdc_sync2;
     end
 
     // 60MHz domain synchronization
-    debug_state_t [1:0] debug_mode_cdc_60mhz;
-    always_ff @(posedge clk_60mhz or negedge rst_n) begin
-        if (!rst_n) begin
+    reg [1:0] debug_mode_cdc_60mhz [1:0];
+    always @(posedge clk_60mhz) begin
+        if (!reset_60mhz) begin
             debug_mode_cdc_60mhz <= {DEBUG_OFF, DEBUG_OFF};
         end else begin
             debug_mode_cdc_60mhz <= {debug_mode_cdc_60mhz[0], debug_mode_cdc_120mhz};
@@ -490,22 +491,10 @@ module top (
     logic host_tx_valid_120mhz, host_tx_valid_60mhz;
     logic phy_tx_valid_120mhz, phy_tx_valid_60mhz;
     
-    always_ff @(posedge clk_60mhz) begin
-        // Sync inputs to 60MHz domain
-        host_tx_valid_60mhz <= host_tx_valid;
-        phy_tx_valid_60mhz  <= phy_tx_valid;
-        
-        // Mux with registered output
-        // Mux with explicit priority encoding
-        if (debug_mode_sync) begin
-            host_tx_valid_mux <= phy_tx_valid_60mhz;
-        end else begin
-            host_tx_valid_mux <= host_tx_valid_60mhz;
-        end
-    end
+    // Remove duplicate assignment to host_tx_valid_mux
 
     // Cross-domain validation registers
-    always_ff @(posedge clk_120mhz) begin
+    always @(posedge clk_120mhz) begin
         host_tx_valid_120mhz <= host_tx_valid;
         phy_tx_valid_120mhz  <= phy_tx_valid;
     end
@@ -518,15 +507,15 @@ module top (
 
     // Registered output with explicit priority encoding
     // Combinational mux with explicit defaults
-    always_comb begin
+    always @(*) begin
         host_tx_valid_mux = 1'b0;  // Default assignment
+        
         if (debug_mode_sync) begin
             host_tx_valid_mux = phy_tx_valid_60mhz;
         end
-            1'b0: host_tx_valid_mux = host_tx_valid;
-            default: host_tx_valid_mux = 1'bx; // X-propagation guard
-        endcase
-    end
+        else begin
+            host_tx_valid_mux = host_tx_valid_60mhz;
+        end
     end
     
     // Clock divider for 120MHz clock (example implementation)
@@ -536,14 +525,15 @@ module top (
     clk_wiz_0 clk_wiz_inst (
         .clk_in1 (clk_60mhz),
         .clk_out1(clk_120mhz),
-        .reset   (~reset_n),     // Active high reset
+        .reset   (reset_n),      // Active low reset
         .locked  (reset_120mhz)  // Active low reset
     );
 
     usb_monitor monitor (
         .clk(clk_120mhz),        // Proper clock connection
         .clk_120mhz(clk_120mhz),
-        .rst_n(rst_n),
+        .rst_n(rst_n)
+    );
         
         // Host Side Interface
         .host_rx_data(host_decoded_data),
