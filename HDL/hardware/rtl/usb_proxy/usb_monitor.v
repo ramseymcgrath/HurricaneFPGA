@@ -259,7 +259,8 @@ module usb_monitor (
                             pid_ack_120 <= 1'b0;
                         end
                         if (!host_rx_valid && !device_rx_valid) begin
-                        state <= ST_IDLE;
+                            state <= ST_IDLE;
+                        end
                     end
                 end
 
