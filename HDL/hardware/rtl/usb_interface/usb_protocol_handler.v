@@ -113,7 +113,7 @@ module usb_protocol_handler (
     
     // Clock frequency parameter (default 60MHz)
     localparam CLK_FREQ_MHZ = 60;
-    localparam RESET_CYCLES = CLK_FREQ_MHZ * 2.5; // 2.5us
+    localparam RESET_CYCLES = (CLK_FREQ_MHZ * 25) / 10; // 2.5us (using integer arithmetic)
     localparam SUSPEND_CYCLES = CLK_FREQ_MHZ * 3000; // 3ms
     
     // CRC5 polynomial: x^5 + x^2 + 1
@@ -165,8 +165,8 @@ module usb_protocol_handler (
                 end
             end else begin
                 se0_counter <= 20'd0;
-                if (se0_counter > RESET_CYCLES) begin
-                    reset_detect <= 1'b0;  // End of reset
+                if (se0_counter > 20'd0 && reset_detect) begin
+                    reset_detect <= 1'b0;  // End of reset only if it was previously detected
                 end
             end
             
