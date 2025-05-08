@@ -24,8 +24,8 @@ module usb_tx_fsm #(
     output wire       tx_packet_ready,
     input wire [3:0]  tx_pid
 );
-    // PID definitions as an enumerated type
-    typedef enum logic [3:0] {
+    // PID definitions as localparams
+    localparam [3:0]
         PID_OUT   = 4'b0001,
         PID_IN    = 4'b1001,
         PID_SETUP = 4'b1101,
@@ -40,20 +40,18 @@ module usb_tx_fsm #(
         PID_PRE   = 4'b1100,
         PID_SOF   = 4'b0101,
         PID_PING  = 4'b0100,
-        PID_SPLIT = 4'b1000
-    } pid_t;
+        PID_SPLIT = 4'b1000;
     
-    // FSM states as an enumerated type
-    typedef enum logic [3:0] {
+    // FSM states as localparams
+    localparam [3:0]
         ST_IDLE   = 4'd0,
         ST_TX_PID = 4'd1,
         ST_TX_DATA = 4'd2,
         ST_TX_CRC = 4'd3,
-        ST_TX_EOP = 4'd4
-    } state_t;
+        ST_TX_EOP = 4'd4;
     
     // State register
-    state_t tx_state;
+    reg [3:0] tx_state;
     
     // Internal registers
     reg [3:0]  tx_byte_cnt;          // Transmit byte counter
@@ -117,7 +115,7 @@ module usb_tx_fsm #(
             // Default assignments
             tx_wr_en <= 1'b0;
             
-            unique case (tx_state)
+            case (tx_state)
                 ST_IDLE: begin
                     utmi_tx_valid <= 1'b0;
                     crc_tx_phase <= 1'b0;
@@ -137,7 +135,7 @@ module usb_tx_fsm #(
                 ST_TX_PID: begin
                     if (utmi_tx_ready) begin
                         // Determine next state based on PID type
-                        unique case (tx_pid)
+                        case (tx_pid)
                             PID_OUT, PID_IN, PID_SETUP, PID_PING, PID_SOF: begin
                                 // TOKEN packets have two additional bytes
                                 tx_state <= ST_TX_DATA;
@@ -206,7 +204,7 @@ module usb_tx_fsm #(
                     if (utmi_tx_ready) begin
                         utmi_tx_valid <= 1'b1;
                         
-                        unique case (tx_pid)
+                        case (tx_pid)
                             PID_OUT, PID_IN, PID_SETUP, PID_PING, PID_SOF: begin
                                 // Send CRC5 for token packets
                                 // Note: CRC5 is inverted as per USB spec
