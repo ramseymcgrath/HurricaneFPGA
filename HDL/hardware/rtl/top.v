@@ -216,6 +216,9 @@ module top #(
         end
     end
     
+    // Declaration of pid_ack_sync signals
+    reg pid_ack_sync1, pid_ack_sync2;
+    
     // Global reset signal
     assign system_rst_n = reset_sync[3] & pll_locked;
     assign rst_n = system_rst_n & ~force_reset;  // Add debug forced reset
@@ -441,7 +444,6 @@ module top #(
     );
     
     // Clock domain crossing synchronizer for PID_ACK
-    reg pid_ack_sync1, pid_ack_sync2;
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             pid_ack_sync1 <= 1'b0;
@@ -528,7 +530,7 @@ module top #(
             debug_mode_cdc_60mhz_1 <= debug_mode_cdc_60mhz_0;
         end
     end
-    wire debug_mode_sync = (debug_mode_cdc_60mhz_1 == DEBUG_ON);
+    wire [1:0] debug_mode_sync = debug_mode_cdc_60mhz_1;  // Pass through the full 2-bit value
 
     // Cross-domain signals for TX valid signals
     // Signal declarations for signals crossing clock domains
