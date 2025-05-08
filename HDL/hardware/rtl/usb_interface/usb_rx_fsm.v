@@ -27,8 +27,8 @@ module usb_rx_fsm #(
     output reg [3:0]  endp,
     output reg        crc_valid
 );
-    // PID definitions as an enumerated type
-    typedef enum logic [3:0] {
+    // PID definitions as localparams
+    localparam [3:0]
         PID_OUT   = 4'b0001,
         PID_IN    = 4'b1001,
         PID_SETUP = 4'b1101,
@@ -43,20 +43,18 @@ module usb_rx_fsm #(
         PID_PRE   = 4'b1100,
         PID_SOF   = 4'b0101,
         PID_PING  = 4'b0100,
-        PID_SPLIT = 4'b1000
-    } pid_t;
+        PID_SPLIT = 4'b1000;
     
-    // FSM states as an enumerated type
-    typedef enum logic [3:0] {
+    // FSM states as localparams
+    localparam [3:0]
         ST_IDLE       = 4'd0,
         ST_RX_PID     = 4'd1,
         ST_RX_TOKEN   = 4'd2,
         ST_RX_DATA    = 4'd3,
-        ST_WAIT_EOP   = 4'd4
-    } state_t;
+        ST_WAIT_EOP   = 4'd4;
     
     // State register
-    state_t rx_state;
+    reg [3:0] rx_state;
     
     // Internal registers
     reg [15:0] token_data;     // Token data buffer
@@ -144,7 +142,7 @@ module usb_rx_fsm #(
                         packet_valid <= 1'b1;
                         packet_data <= utmi_rx_data;
                         
-                        unique case (pid)
+                        case (pid)
                             PID_OUT, PID_IN, PID_SETUP, PID_PING, PID_SOF: begin
                                 // TOKEN packet
                                 rx_state <= ST_RX_TOKEN;
