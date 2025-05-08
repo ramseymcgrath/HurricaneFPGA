@@ -82,9 +82,15 @@ DEFINE PORT GROUP "outputs" "led[0]" "led[1]" "led[2]" "led[3]" "led[4]" "led[5]
                             "debug[0]" "debug[1]" "debug[2]" "debug[3]";
 
 # Timing Constraints
-DEFINE NET GROUP "clk_group" "clk_60mhz" "pll_clk_120mhz" "pll_clk_240mhz";
+DEFINE NET GROUP "clk_group" "pll_clk_120mhz" "pll_clk_240mhz";
+DEFINE NET GROUP "debug_clk_group" "clk_60mhz";
+DEFINE CLOCKGROUP "clk_60mhz ASYNCHRONOUS TO clk_group";
 DEFINE NET GROUP "sync_group" "reset_n" "reset_sync" "pll_locked";
 
 # Path Delay Constraints
 DEFINE DELAY GROUP "input_delay" "inputs";
 DEFINE DELAY GROUP "output_delay" "outputs";
+
+// CDC constraints for debug mode synchronization
+DEFINE NET GROUP "cdc_debug_mode" "debug_mode_cdc_sync1" "debug_mode_cdc_sync2";
+TIG "cdc_debug_mode";

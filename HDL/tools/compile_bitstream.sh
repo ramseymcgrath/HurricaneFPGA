@@ -1,4 +1,4 @@
-k#!/usr/bin/env bash
+#!/usr/bin/env bash
 # ===============================================================
 # Cynthion Build Driver (ECP5)
 # ===============================================================
@@ -170,7 +170,7 @@ TEXTCFG="$BUILD_DIR/${TOP_MODULE}_out.config"
 log pnr "Running nextpnr‑ecp5 ($NUM_THREADS threads)…"
 start_ts=$(date +%s)
 nextpnr_args=(
-  --${DEVICE}
+  --device ${DEVICE}
   --package "$PACKAGE"
   --json "$SYNTH_JSON"
   --lpf "$CONSTRAINT_FILE"
@@ -190,5 +190,5 @@ fi
 # ---------------------------------------------------------------
 # Bitstream generation
 # ---------------------------------------------------------------
-BITSTREAM_FILE="$BUILD
+BITSTREAM_FILE="$BUILD_DIR/${TOP_MODULE}.bit"
 

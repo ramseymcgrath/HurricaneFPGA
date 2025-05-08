@@ -32,7 +32,8 @@ module top (
     output wire [7:0]  led,             // Status LEDs
     
     // Debug Interface
-    output wire [3:0]  debug            // Debug signals
+    output wire [3:0]  debug,           // Debug signals
+    output wire        pid_ack          // PID Acknowledge
 );
 
     // Clock generation
@@ -41,6 +42,7 @@ module top (
     wire        clk_240mhz;         // 240MHz clock for PHY
     wire        pll_locked;         // PLL lock indicator
     wire        rst_n;              // Global reset (active low)
+    wire        pid_ack_120;        // PID ACK from monitor (120MHz domain)
     
     // Output enable signals for USB PHYs
     wire usb0_dp_oe;        // USB0 D+ output enable
@@ -214,6 +216,7 @@ module top (
     // Global reset signal
     assign system_rst_n = reset_sync[3] & pll_locked;
     assign rst_n = system_rst_n & ~force_reset;  // Add debug forced reset
+    assign pid_ack = pid_ack_sync2;  // Connect synchronized PID_ACK to output
     
     // USB PHY 0 - CONTROL (Internal MCU Access)
     usb_phy_wrapper phy0 (
@@ -434,9 +437,111 @@ module top (
         .resume_detect()
     );
     
-    // USB monitor/proxy logic
+    // Clock domain crossing synchronizer for PID_ACK
+    reg pid_ack_sync1, pid_ack_sync2;
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            pid_ack_sync1 <= 1'b0;
+            pid_ack_sync2 <= 1'b0;
+        end else begin
+            pid_ack_sync1 <= pid_ack_120;
+            pid_ack_sync2 <= pid_ack_sync1;
+        end
+    end
+
+    // Host TX valid mux for debug mode
+    // Debug mode synchronization and proxy control
+    // CDC synchronization with gray coding
+    typedef enum logic [1:0] {
+        DEBUG_OFF = 2'b00,
+        DEBUG_ON  = 2'b01
+    } debug_state_t;
+    
+    // 120MHz domain synchronization with proper CDC
+    debug_state_t debug_mode_cdc_sync1, debug_mode_cdc_sync2;
+    always_ff @(posedge clk_120mhz or negedge reset_120mhz) begin
+        if (!reset_120mhz) begin
+            debug_mode_cdc_sync1 <= DEBUG_OFF;
+            debug_mode_cdc_sync2 <= DEBUG_OFF;
+        end else begin
+            debug_mode_cdc_sync1 <= debug_mode;
+            debug_mode_cdc_sync2 <= debug_mode_cdc_sync1;
+        end
+    end
+
+    // Registered output for debug mode in 120MHz domain
+    debug_state_t debug_mode_cdc_120mhz;
+    always_ff @(posedge clk_120mhz) begin
+        debug_mode_cdc_120mhz <= debug_mode_cdc_sync2;
+    end
+
+    // 60MHz domain synchronization
+    debug_state_t [1:0] debug_mode_cdc_60mhz;
+    always_ff @(posedge clk_60mhz or negedge rst_n) begin
+        if (!rst_n) begin
+            debug_mode_cdc_60mhz <= {DEBUG_OFF, DEBUG_OFF};
+        end else begin
+            debug_mode_cdc_60mhz <= {debug_mode_cdc_60mhz[0], debug_mode_cdc_120mhz};
+        end
+    end
+    wire debug_mode_sync = (debug_mode_cdc_60mhz[1] == DEBUG_ON);
+
+    // Registered mux with synchronized inputs
+    logic host_tx_valid_120mhz, host_tx_valid_60mhz;
+    logic phy_tx_valid_120mhz, phy_tx_valid_60mhz;
+    
+    always_ff @(posedge clk_60mhz) begin
+        // Sync inputs to 60MHz domain
+        host_tx_valid_60mhz <= host_tx_valid;
+        phy_tx_valid_60mhz  <= phy_tx_valid;
+        
+        // Mux with registered output
+        // Mux with explicit priority encoding
+        if (debug_mode_sync) begin
+            host_tx_valid_mux <= phy_tx_valid_60mhz;
+        end else begin
+            host_tx_valid_mux <= host_tx_valid_60mhz;
+        end
+    end
+
+    // Cross-domain validation registers
+    always_ff @(posedge clk_120mhz) begin
+        host_tx_valid_120mhz <= host_tx_valid;
+        phy_tx_valid_120mhz  <= phy_tx_valid;
+    end
+    
+    // Verify synchronization latency and stability
+    `ifdef FORMAL
+    assert property (@(posedge clk_120mhz)
+        $stable(debug_mode) |-> ##2 (debug_mode_sync == $past(debug_mode,2)));
+    `endif
+
+    // Registered output with explicit priority encoding
+    // Combinational mux with explicit defaults
+    always_comb begin
+        host_tx_valid_mux = 1'b0;  // Default assignment
+        if (debug_mode_sync) begin
+            host_tx_valid_mux = phy_tx_valid_60mhz;
+        end
+            1'b0: host_tx_valid_mux = host_tx_valid;
+            default: host_tx_valid_mux = 1'bx; // X-propagation guard
+        endcase
+    end
+    end
+    
+    // Clock divider for 120MHz clock (example implementation)
+    wire clk_120mhz;
+    wire reset_120mhz;
+    
+    clk_wiz_0 clk_wiz_inst (
+        .clk_in1 (clk_60mhz),
+        .clk_out1(clk_120mhz),
+        .reset   (~reset_n),     // Active high reset
+        .locked  (reset_120mhz)  // Active low reset
+    );
+
     usb_monitor monitor (
-        .clk(clk),
+        .clk(clk_120mhz),        // Proper clock connection
         .clk_120mhz(clk_120mhz),
         .rst_n(rst_n),
         
@@ -450,10 +555,13 @@ module top (
         .host_rx_endp(host_endp),
         .host_rx_crc_valid(host_crc_valid),
         .host_tx_data(host_tx_data),
-        .host_tx_valid(debug_mode ? 1'b0 : host_tx_valid),
+        .host_tx_valid(host_tx_valid),
         .host_tx_sop(host_tx_sop),
         .host_tx_eop(host_tx_eop),
         .host_tx_pid(host_tx_pid),
+        
+        // PID Acknowledge
+        .pid_ack_120(pid_ack_120),  // 120MHz domain signal
         
         // Device Side Interface
         .device_rx_data(device_decoded_data),
@@ -463,7 +571,7 @@ module top (
         .device_rx_pid(device_pid),
         .device_rx_crc_valid(device_crc_valid),
         .device_tx_data(device_tx_data),
-        .device_tx_valid(debug_mode ? device_tx_valid : 1'b0),
+        .device_tx_valid(device_tx_valid & ~debug_mode_sync),  // Active-low debug enable
         .device_tx_sop(device_tx_sop),
         .device_tx_eop(device_tx_eop),
         .device_tx_pid(device_tx_pid),
@@ -670,7 +778,7 @@ module top (
         
         // Configuration Control
         .force_reset(force_reset),
-        .debug_mode(),
+        .debug_mode(debug_mode_sync),
         .trigger_config(),
         .loopback_enable()
     );

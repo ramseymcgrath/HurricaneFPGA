@@ -14,6 +14,7 @@ module usb_monitor (
     input  wire        clk_120mhz,        // 120MHz clock for faster processing
     input  wire        rst_n,             // Active low reset
     output reg         overflow_detected, // Buffer overflow indicator
+    output reg         pid_ack_120,       // PID ACK detection signal (120MHz domain)
 
     // Host Side USB Interface
     input  wire [7:0]  host_rx_data,      // Decoded data from host
@@ -26,6 +27,7 @@ module usb_monitor (
     input  wire        host_rx_crc_valid, // CRC valid for host packets
     output wire [7:0]  host_tx_data,      // Data to transmit to host
     output wire        host_tx_valid,     // Data valid for host transmission
+    output wire        host_tx_valid_mux, // Muxed valid signal for debug mode
     output wire        host_tx_sop,       // Start of packet to host
     output wire        host_tx_eop,       // End of packet to host
     output wire [3:0]  host_tx_pid,       // PID to send to host
@@ -81,6 +83,7 @@ module usb_monitor (
     localparam PID_OUT   = 4'b0001;
     localparam PID_IN    = 4'b1001;
     localparam PID_SETUP = 4'b1101;
+    localparam PID_ACK   = 4'b0010;
     localparam PID_DATA0 = 4'b0011;
     localparam PID_DATA1 = 4'b1011;
     localparam PID_SOF   = 4'b0101;
@@ -130,6 +133,7 @@ module usb_monitor (
     reg [31:0] device_packets;
     reg [15:0] error_count;
     reg        buffer_write_en;
+    reg  [1:0] pid_ack_counter;  // Counter for PID ACK pulse generation
 
     // Endpoint index calculation
     wire [4:0] endpoint_index = packet_dir ? 
@@ -153,7 +157,7 @@ module usb_monitor (
     assign host_tx_pid = packet_modified ? latched_device_pid : device_rx_pid;
 
     // Main state machine
-    always @(posedge clk or negedge rst_n) begin
+    always @(posedge clk_120mhz or negedge rst_n) begin
         if (!rst_n) begin
             state <= ST_IDLE;
             packet_length <= 0;
@@ -173,6 +177,9 @@ module usb_monitor (
             buffer_write_en <= 0;
             last_frame_num <= 0;
             current_toggle <= 0;
+            pid_ack_120 <= 1'b0;
+            pid_ack_counter <= 2'b00;
+            
         end else begin
             // Default assignments
             buffer_valid <= 0;
@@ -235,10 +242,23 @@ module usb_monitor (
                         // Update data toggle if needed
                         if ((latched_host_pid == PID_OUT || latched_host_pid == PID_SETUP) && 
                             device_rx_pid == PID_ACK && index_valid) begin
+                            // Initiate 2-cycle pulse for clock domain crossing
+                            pid_ack_120 <= 1'b1;
+                            pid_ack_counter <= 2'b11;
+                        
                             data_toggle[endpoint_index] <= ~data_toggle[endpoint_index];
                         end
-                    end
-                    else if (!host_rx_valid && !device_rx_valid) begin
+                    end else begin
+                        // Decrement counter and clear pulse
+                        if (pid_ack_counter != 2'b00) begin
+                            pid_ack_counter <= pid_ack_counter - 1'b1;
+                            pid_ack_120 <= (pid_ack_counter != 2'b01);
+                        end
+                        else begin
+                            pid_ack_counter <= 2'b00;
+                            pid_ack_120 <= 1'b0;
+                        end
+                        if (!host_rx_valid && !device_rx_valid) begin
                         state <= ST_IDLE;
                     end
                 end
